@@ -1,0 +1,1280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Transit — Subway Map Builder</title>
+<style>
+  :root{
+    --bg: #f6f7f5;
+    --panel: #ffffff;
+    --ink: #16211c;
+    --ink-soft: #5b6a61;
+    --line: #e4e7e2;
+    --accent: #1f8a5f;
+    --accent-soft: #e6f4ec;
+    --radius: 14px;
+    --shadow: 0 1px 2px rgba(20,30,25,0.04), 0 8px 24px -12px rgba(20,30,25,0.12);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;}
+  body{
+    background: var(--bg);
+    color: var(--ink);
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+  }
+
+  /* ---------- Header ---------- */
+  header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:14px 22px;
+    background:var(--panel);
+    border-bottom:1px solid var(--line);
+    z-index:20;
+  }
+  .brand{ display:flex; align-items:center; gap:10px; }
+  .brand .mark{
+    width:26px;height:26px;border-radius:8px;
+    background: conic-gradient(from 200deg, #1f8a5f, #2fb1e0, #f2a541, #e0526b, #1f8a5f);
+  }
+  .brand h1{
+    font-size:16px; font-weight:700; letter-spacing:-0.01em; margin:0;
+  }
+  .brand span{ font-size:12px; color:var(--ink-soft); font-weight:500; }
+
+  .map-title-wrap{ display:flex; align-items:center; gap:8px; }
+  #mapName{
+    font-size:14px; font-weight:600; border:1px solid transparent; background:transparent;
+    padding:6px 10px; border-radius:8px; color:var(--ink); width:220px; text-align:center;
+  }
+  #mapName:hover, #mapName:focus{ border-color:var(--line); background:var(--bg); outline:none;}
+
+  .header-actions{ display:flex; gap:8px; }
+  .btn{
+    appearance:none; border:1px solid var(--line); background:var(--panel);
+    color:var(--ink); font-size:13px; font-weight:600; padding:8px 14px;
+    border-radius:10px; cursor:pointer; transition: all .12s ease;
+    display:flex; align-items:center; gap:6px;
+  }
+  .btn:hover{ background:var(--bg); border-color:#cfd6cf; }
+  .btn:active{ transform: translateY(1px); }
+  .btn.primary{ background:var(--ink); color:#fff; border-color:var(--ink); }
+  .btn.primary:hover{ background:#0f1712; }
+  .btn.danger{ color:#b0403f; }
+  .btn.danger:hover{ background:#fdecec; border-color:#f3c8c7; }
+
+  /* ---------- Layout ---------- */
+  .app{ flex:1; display:flex; min-height:0; }
+  aside{
+    width:270px; flex-shrink:0; background:var(--panel);
+    border-right:1px solid var(--line); overflow-y:auto;
+    padding:18px 16px 40px;
+  }
+  main{ flex:1; position:relative; min-width:0; }
+
+  .section-title{
+    font-size:11px; text-transform:uppercase; letter-spacing:.07em;
+    color:var(--ink-soft); font-weight:700; margin:22px 0 10px;
+  }
+  .section-title:first-child{ margin-top:0; }
+
+  /* Tool grid */
+  .tools{ display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+  .tool{
+    display:flex; flex-direction:column; align-items:center; gap:6px;
+    padding:10px 6px; border-radius:10px; border:1px solid var(--line);
+    background:var(--bg); cursor:pointer; font-size:11.5px; font-weight:600; color:var(--ink-soft);
+    transition: all .12s ease;
+  }
+  .tool svg{ width:18px; height:18px; stroke:var(--ink-soft); transition: stroke .12s ease; }
+  .tool:hover{ border-color:#cfd6cf; }
+  .tool.active{ background:var(--accent-soft); border-color:var(--accent); color:var(--accent); }
+  .tool.active svg{ stroke:var(--accent); }
+
+  .hint{
+    margin-top:10px; font-size:12px; color:var(--ink-soft); line-height:1.5;
+    background:var(--bg); padding:10px 12px; border-radius:10px; border:1px dashed var(--line);
+  }
+
+  /* Line Manager */
+  .lm-header{ display:flex; align-items:center; justify-content:space-between; margin:22px 0 10px; }
+  .lm-header .section-title{ margin:0; }
+  .lm-add{
+    width:24px; height:24px; border-radius:7px; border:1px solid var(--line); background:var(--bg);
+    color:var(--ink); font-size:16px; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center;
+    font-weight:700; transition: all .12s ease;
+  }
+  .lm-add:hover{ background:var(--accent-soft); border-color:var(--accent); color:var(--accent); }
+
+  #lineList{ display:flex; flex-direction:column; gap:6px; }
+  .line-row{
+    display:flex; align-items:center; gap:8px; padding:8px 8px;
+    border-radius:10px; border:1px solid var(--line); background:var(--bg);
+    transition: all .12s ease; position:relative;
+  }
+  .line-row:hover{ border-color:#cfd6cf; }
+  .line-row.selected{ border-color: var(--row-color, var(--accent)); background: color-mix(in srgb, var(--row-color, var(--accent)) 10%, white); }
+  .swatch{
+    width:16px; height:16px; border-radius:50%; flex-shrink:0; cursor:pointer;
+    box-shadow: inset 0 0 0 2px rgba(255,255,255,.6), 0 0 0 1px rgba(0,0,0,.06);
+  }
+  .line-row input.lname{
+    border:none; background:transparent; font-size:13px; font-weight:600; flex:1; min-width:0;
+    color:var(--ink); padding:2px 0;
+  }
+  .line-row input.lname:focus{ outline:none; }
+  .mode-toggle{
+    width:22px; height:22px; flex-shrink:0; border-radius:6px; border:1px solid var(--line); background:var(--panel);
+    font-size:10.5px; font-weight:700; color:var(--ink-soft); cursor:pointer; display:flex; align-items:center; justify-content:center;
+  }
+  .mode-toggle:hover{ background:var(--bg); }
+  .line-row .lcount{ font-size:11px; color:var(--ink-soft); flex-shrink:0; }
+  .line-row .ldel{ opacity:0; flex-shrink:0; width:20px; height:20px; display:flex; align-items:center; justify-content:center; border-radius:6px; cursor:pointer; }
+  .line-row:hover .ldel{ opacity:1; }
+  .line-row .ldel:hover{ background:#fdecec; }
+  .line-row .ldel svg{ width:12px; height:12px; stroke:#b0403f; }
+
+  .empty-note{ font-size:12px; color:var(--ink-soft); padding:6px 2px; }
+
+  /* Color popover */
+  .color-pop{
+    position:absolute; top:calc(100% + 6px); left:8px; z-index:40;
+    background:var(--panel); border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow);
+    padding:10px; display:grid; grid-template-columns: repeat(5, 1fr); gap:7px; width:186px;
+  }
+  .pswatch{
+    width:100%; aspect-ratio:1; border-radius:50%; cursor:pointer; border:2px solid transparent;
+    box-shadow: inset 0 0 0 2px rgba(255,255,255,.5);
+    transition: transform .12s ease;
+  }
+  .pswatch:hover{ transform: scale(1.12); }
+  .pswatch.selected{ border-color: var(--ink); }
+
+  /* Create-line panel */
+  .create-panel{
+    border:1px solid var(--line); background:var(--bg); border-radius:12px; padding:12px; margin-bottom:10px;
+  }
+  .create-panel .cp-row{ display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+  .create-panel .cp-row:last-child{ margin-bottom:0; }
+  .create-panel label{ font-size:11px; font-weight:700; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.05em; }
+  .create-palette{ display:grid; grid-template-columns: repeat(6, 1fr); gap:6px; }
+  .create-panel input[type="text"], .create-panel input[type="number"]{
+    flex:1; min-width:0; border:1px solid var(--line); border-radius:8px; padding:7px 9px; font-size:13px; background:var(--panel); color:var(--ink);
+  }
+  .create-panel input:focus{ outline:2px solid var(--accent-soft); border-color:var(--accent); }
+  .segmented{ display:flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; flex-shrink:0; }
+  .segmented button{
+    border:none; background:var(--panel); padding:6px 10px; font-size:12px; font-weight:600; color:var(--ink-soft); cursor:pointer;
+  }
+  .segmented button.active{ background:var(--ink); color:#fff; }
+  .cp-actions{ display:flex; gap:8px; margin-top:12px; }
+  .cp-actions .btn{ flex:1; justify-content:center; padding:7px; font-size:12.5px; }
+
+  /* Backgrounds */
+  .bgs{ display:flex; flex-direction:column; gap:8px; }
+  .bg-opt{
+    display:flex; align-items:center; gap:10px; padding:6px; border-radius:10px;
+    border:1px solid var(--line); cursor:pointer; background:var(--bg);
+  }
+  .bg-opt.selected{ border-color:var(--accent); background:var(--accent-soft); }
+  .bg-opt img{ width:44px; height:30px; object-fit:cover; border-radius:6px; border:1px solid var(--line); background:#fff; }
+  .bg-opt span{ font-size:12.5px; font-weight:600; color:var(--ink); }
+
+  .stat-row{ display:flex; justify-content:space-between; font-size:12px; color:var(--ink-soft); padding:3px 0;}
+  .stat-row b{ color:var(--ink); font-weight:700; }
+
+  /* Canvas area */
+  #canvasWrap{ position:absolute; inset:0; overflow:hidden; }
+  canvas{ display:block; width:100%; height:100%; cursor: default; touch-action:none; }
+
+  .floating-toast{
+    position:absolute; bottom:20px; left:50%; transform:translateX(-50%) translateY(8px);
+    background:var(--ink); color:#fff; font-size:13px; font-weight:600;
+    padding:9px 16px; border-radius:999px; box-shadow:var(--shadow);
+    opacity:0; pointer-events:none; transition: all .2s ease; z-index:30;
+  }
+  .floating-toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+  .zoom-controls{
+    position:absolute; right:18px; bottom:18px; display:flex; flex-direction:column;
+    background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden;
+    box-shadow:var(--shadow); z-index:15;
+  }
+  .zoom-controls button{
+    width:34px; height:34px; border:none; background:transparent; cursor:pointer;
+    font-size:16px; color:var(--ink); border-bottom:1px solid var(--line);
+  }
+  .zoom-controls button:last-child{ border-bottom:none; }
+  .zoom-controls button:hover{ background:var(--bg); }
+
+  .top-legend{
+    position:absolute; top:16px; left:16px; background:rgba(255,255,255,0.9); backdrop-filter: blur(6px);
+    border:1px solid var(--line); border-radius:12px; padding:10px 12px; max-width:230px;
+    box-shadow:var(--shadow); font-size:11.5px; color:var(--ink-soft); z-index:15;
+    display:none;
+  }
+  .top-legend.show{ display:block; }
+  .top-legend b{ display:block; font-size:12px; color:var(--ink); margin-bottom:6px; }
+  .legend-item{ display:flex; align-items:center; gap:6px; margin-bottom:4px; }
+  .legend-dot{ width:9px; height:9px; border-radius:50%; flex-shrink:0; }
+
+  input[type="file"]{ display:none; }
+
+  ::-webkit-scrollbar{ width:8px; }
+  ::-webkit-scrollbar-thumb{ background:#dfe4de; border-radius:8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="mark"></div>
+    <div>
+      <h1>Transit <span style="font-weight:500;color:var(--ink-soft)">v1.0.1</span></h1>
+    </div>
+  </div>
+  <div class="map-title-wrap">
+    <input id="mapName" value="Untitled Metro Map" spellcheck="false">
+  </div>
+  <div class="header-actions">
+    <button class="btn" id="btnLegend">Legend</button>
+    <button class="btn" id="btnExport">Export</button>
+    <button class="btn" id="btnImport">Import</button>
+    <input type="file" id="fileInput" accept="application/json">
+    <button class="btn danger" id="btnClear">Clear</button>
+    <button class="btn primary" id="btnSave">Save</button>
+  </div>
+</header>
+
+<div class="app">
+  <aside>
+    <div class="section-title">Tools</div>
+    <div class="tools">
+      <div class="tool active" data-tool="select" title="Move & select">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l7 16 2-7 7-2z"/></svg>
+        Select
+      </div>
+      <div class="tool" data-tool="station" title="Add station">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>
+        Station
+      </div>
+      <div class="tool" data-tool="line" title="Draw line">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="18" r="2.2"/><circle cx="19" cy="6" r="2.2"/><path d="M6.8 16.2L17.2 7.8"/></svg>
+        Line
+      </div>
+      <div class="tool" data-tool="erase" title="Delete station/line">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>
+        Erase
+      </div>
+    </div>
+    <div class="hint" id="toolHint">Drag stations to move them. Double-click a station to rename it.</div>
+
+    <div class="lm-header">
+      <div class="section-title" style="margin:0;">Line Manager</div>
+      <button class="lm-add" id="btnNewLine" title="New line">+</button>
+    </div>
+    <div id="createPanel"></div>
+    <div id="lineList"></div>
+
+    <div class="section-title">Background</div>
+    <div class="bgs" id="bgList"></div>
+
+    <div class="section-title">Map stats</div>
+    <div class="stat-row"><span>Stations</span><b id="statStations">0</b></div>
+    <div class="stat-row"><span>Lines</span><b id="statLines">0</b></div>
+    <div class="stat-row"><span>Trains running</span><b id="statTrains">0</b></div>
+  </aside>
+
+  <main>
+    <div id="canvasWrap">
+      <canvas id="canvas"></canvas>
+      <div class="top-legend" id="legend"><b>Lines</b><div id="legendItems"></div></div>
+      <div class="zoom-controls">
+        <button id="zoomIn">+</button>
+        <button id="zoomReset">·</button>
+        <button id="zoomOut">–</button>
+      </div>
+      <div class="floating-toast" id="toast"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ============================ CONSTANTS ============================ */
+  const PALETTE = [
+    "#E0526B", // red
+    "#2F6BE0", // blue
+    "#1F8A5F", // green
+    "#F2A541", // orange/amber
+    "#8B5FE0", // violet
+    "#2FB1E0", // sky
+    "#E0972F", // gold
+    "#3FA79A", // teal
+    "#D64FA0", // magenta/pink
+    "#6E7F4A", // olive
+    "#B0403F", // brick
+    "#4A5FE0", // indigo
+    "#3FBF6F", // mint
+    "#A85C2F", // brown
+    "#5B6A61", // slate
+    "#E0396B", // rose
+    "#2FA8E0", // azure
+  ];
+
+  const STATION_R = 9;
+  const TRAIN_SPEED = 0.14; // fraction of segment per second baseline (scaled by segment length)
+  const SNAP_DIST = 16;
+
+  /* ============================ STATE ============================ */
+  let state = {
+    stations: [],  // {id, x, y, name}
+    lines: [],     // {id, name, number, numbered:bool, color, stationIds:[...]}
+  };
+  let nextStationId = 1;
+  let nextLineId = 1;
+
+  let tool = "select";
+  let selectedLineId = null;
+
+  let view = { x: 0, y: 0, scale: 1 };
+  let dragging = null; // {type:'station', id, offsetX, offsetY}
+  let panning = null;
+  let lineBuilder = null; // array of station ids being connected
+  let pendingLine = null; // {color, numbered, name, number} being traced onto the canvas
+  let openColorPopoverFor = null; // line id whose color popover is open
+
+  let trains = []; // {lineId, segIndex, t, dir}
+
+  const BACKGROUNDS = [
+    { id: "none", name: "None (grid)" },
+    { id: "riverside", name: "Riverside Grid" },
+    { id: "harbor", name: "Harbor District" },
+    { id: "hills", name: "Terraced Hills" },
+  ];
+  let currentBg = "none";
+
+  /* ============================ DOM ============================ */
+  const canvas = document.getElementById("canvas");
+  const ctx = canvas.getContext("2d");
+  const lineListEl = document.getElementById("lineList");
+  const createPanelEl = document.getElementById("createPanel");
+  const bgListEl = document.getElementById("bgList");
+  const toast = document.getElementById("toast");
+  const legendEl = document.getElementById("legend");
+  const legendItemsEl = document.getElementById("legendItems");
+  const mapNameInput = document.getElementById("mapName");
+
+  /* ============================ CANVAS SIZING ============================ */
+  function resizeCanvas(){
+    const wrap = document.getElementById("canvasWrap");
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = wrap.clientWidth * dpr;
+    canvas.height = wrap.clientHeight * dpr;
+    canvas.style.width = wrap.clientWidth + "px";
+    canvas.style.height = wrap.clientHeight + "px";
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  window.addEventListener("resize", resizeCanvas);
+
+  /* ============================ BACKGROUND MAPS (inline SVG, 3 muted colors, abstract) ============================ */
+  const bgSVGs = {
+    riverside: makeCitySVG(["#eef1ec","#cdd6c9","#9fae9a"], "riverside"),
+    harbor:    makeCitySVG(["#eef2f4","#c9d6db","#8fa5ad"], "harbor"),
+    hills:     makeCitySVG(["#f2efe9","#dccdb8","#b79a7b"], "hills"),
+  };
+  const bgImages = {};
+
+  function makeCitySVG(colors, variant){
+    const [bg, mid, dark] = colors;
+    let blocks = "";
+    let seedBase = variant === "riverside" ? 11 : variant === "harbor" ? 47 : 91;
+    let s = seedBase;
+    function rand(){ s = (s * 9301 + 49297) % 233280; return s / 233280; }
+
+    if (variant === "riverside"){
+      // grid of rectangular blocks + a diagonal river
+      for(let gx=0; gx<8; gx++){
+        for(let gy=0; gy<6; gy++){
+          if (rand() > 0.22){
+            const x = 40 + gx*100 + rand()*10;
+            const y = 40 + gy*100 + rand()*10;
+            const w = 60 + rand()*20;
+            const h = 60 + rand()*20;
+            blocks += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="4" fill="${rand()>0.5?mid:dark}" opacity="${0.5+rand()*0.4}"/>`;
+          }
+        }
+      }
+      blocks += `<path d="M -20 620 C 200 500, 400 700, 620 480 S 900 380, 1020 420" stroke="${dark}" stroke-width="46" fill="none" opacity="0.35"/>`;
+    } else if (variant === "harbor"){
+      // horizontal piers + water bands
+      for(let i=0;i<5;i++){
+        blocks += `<rect x="0" y="${i*130}" width="1000" height="60" fill="${mid}" opacity="0.18"/>`;
+      }
+      for(let i=0;i<10;i++){
+        const x = 30 + i*95 + rand()*10;
+        const y = 60 + (i%5)*130 + rand()*30;
+        blocks += `<rect x="${x}" y="${y}" width="${40+rand()*30}" height="${20+rand()*40}" fill="${dark}" opacity="${0.4+rand()*0.3}" rx="3"/>`;
+      }
+      blocks += `<circle cx="850" cy="150" r="70" fill="${dark}" opacity="0.15"/>`;
+    } else {
+      // hills: layered terraces
+      for(let i=0;i<6;i++){
+        const y = 100 + i*90;
+        blocks += `<path d="M -20 ${y} Q 500 ${y-60+rand()*40} 1020 ${y}" stroke="${dark}" stroke-width="3" fill="none" opacity="0.3"/>`;
+      }
+      for(let i=0;i<14;i++){
+        const x = rand()*960+20;
+        const y = rand()*680+20;
+        const w = 20+rand()*30;
+        blocks += `<rect x="${x}" y="${y}" width="${w}" height="${w}" fill="${mid}" opacity="${0.3+rand()*0.3}" rx="3" transform="rotate(${rand()*10-5} ${x} ${y})"/>`;
+      }
+    }
+
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 720" width="1000" height="720">
+      <rect width="1000" height="720" fill="${bg}"/>
+      ${blocks}
+    </svg>`;
+    return "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svg)));
+  }
+
+  Object.keys(bgSVGs).forEach(k=>{
+    const img = new Image();
+    img.src = bgSVGs[k];
+    bgImages[k] = img;
+  });
+
+  /* ============================ SIDEBAR: create-line panel ============================ */
+  let creatingLine = false; // whether the create panel is open
+  let createDraft = null;   // draft state while the panel is open
+
+  function nextUnusedColor(){
+    const used = new Set(state.lines.map(l=>l.color));
+    return PALETTE.find(c=>!used.has(c)) || PALETTE[state.lines.length % PALETTE.length];
+  }
+
+  function openCreatePanel(){
+    creatingLine = true;
+    createDraft = { color: nextUnusedColor(), numbered: false, value: "Line " + nextLineId };
+    renderCreatePanel();
+  }
+
+  function closeCreatePanel(){
+    creatingLine = false;
+    createDraft = null;
+    renderCreatePanel();
+  }
+
+  function renderCreatePanel(){
+    createPanelEl.innerHTML = "";
+    if (!creatingLine || !createDraft) return;
+
+    const panel = document.createElement("div");
+    panel.className = "create-panel";
+
+    // color row
+    const colorRow = document.createElement("div");
+    colorRow.className = "cp-row";
+    colorRow.style.flexDirection = "column";
+    colorRow.style.alignItems = "stretch";
+    const colorLabel = document.createElement("label");
+    colorLabel.textContent = "Color";
+    colorLabel.style.marginBottom = "6px";
+    colorRow.appendChild(colorLabel);
+    const pal = document.createElement("div");
+    pal.className = "create-palette";
+    PALETTE.forEach(c=>{
+      const sw = document.createElement("div");
+      sw.className = "pswatch" + (c === createDraft.color ? " selected" : "");
+      sw.style.background = c;
+      sw.title = c;
+      sw.addEventListener("click", ()=>{ createDraft.color = c; renderCreatePanel(); });
+      pal.appendChild(sw);
+    });
+    colorRow.appendChild(pal);
+    panel.appendChild(colorRow);
+
+    // name-type row
+    const typeRow = document.createElement("div");
+    typeRow.className = "cp-row";
+    const typeLabel = document.createElement("label");
+    typeLabel.textContent = "Label";
+    typeRow.appendChild(typeLabel);
+    const seg = document.createElement("div");
+    seg.className = "segmented";
+    const nameBtn = document.createElement("button");
+    nameBtn.textContent = "Name";
+    nameBtn.className = createDraft.numbered ? "" : "active";
+    nameBtn.addEventListener("click", ()=>{
+      if (createDraft.numbered){ createDraft.numbered = false; createDraft.value = "Line " + nextLineId; renderCreatePanel(); }
+    });
+    const numBtn = document.createElement("button");
+    numBtn.textContent = "Number";
+    numBtn.className = createDraft.numbered ? "active" : "";
+    numBtn.addEventListener("click", ()=>{
+      if (!createDraft.numbered){ createDraft.numbered = true; createDraft.value = String(nextLineId); renderCreatePanel(); }
+    });
+    seg.appendChild(nameBtn); seg.appendChild(numBtn);
+    typeRow.appendChild(seg);
+    panel.appendChild(typeRow);
+
+    // value input row
+    const valRow = document.createElement("div");
+    valRow.className = "cp-row";
+    const valLabel = document.createElement("label");
+    valLabel.textContent = createDraft.numbered ? "No." : "Name";
+    valRow.appendChild(valLabel);
+    const valInput = document.createElement("input");
+    valInput.type = createDraft.numbered ? "number" : "text";
+    valInput.value = createDraft.value;
+    valInput.addEventListener("input", ()=>{ createDraft.value = valInput.value; });
+    valRow.appendChild(valInput);
+    panel.appendChild(valRow);
+
+    // actions
+    const actions = document.createElement("div");
+    actions.className = "cp-actions";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.addEventListener("click", closeCreatePanel);
+    const drawBtn = document.createElement("button");
+    drawBtn.className = "btn primary";
+    drawBtn.textContent = "Trace on map →";
+    drawBtn.addEventListener("click", ()=>{
+      pendingLine = {
+        color: createDraft.color,
+        numbered: createDraft.numbered,
+        name: createDraft.numbered ? "" : (createDraft.value || ("Line " + nextLineId)),
+        number: createDraft.numbered ? (createDraft.value || String(nextLineId)) : "",
+      };
+      lineBuilder = [];
+      setTool("line");
+      document.getElementById("toolHint").textContent = "Click stations on the map to add stops. Press Enter to finish the line, Esc to cancel.";
+      closeCreatePanel();
+      showToast("Now click stations to trace the line");
+    });
+    actions.appendChild(cancelBtn);
+    actions.appendChild(drawBtn);
+    panel.appendChild(actions);
+
+    createPanelEl.appendChild(panel);
+  }
+
+  function setTool(t){
+    tool = t;
+    document.querySelectorAll(".tool").forEach(x=>x.classList.toggle("active", x.dataset.tool===t));
+  }
+
+  function lineLabel(l){
+    return l.numbered ? ("#" + l.number) : l.name;
+  }
+
+  /* ============================ SIDEBAR: backgrounds ============================ */
+  function renderBgList(){
+    bgListEl.innerHTML = "";
+    BACKGROUNDS.forEach(b=>{
+      const row = document.createElement("div");
+      row.className = "bg-opt" + (currentBg === b.id ? " selected" : "");
+      const thumb = document.createElement("div");
+      if (b.id === "none"){
+        thumb.style.cssText = "width:44px;height:30px;border-radius:6px;border:1px solid var(--line);background:linear-gradient(45deg,#eee 25%,transparent 25%),linear-gradient(-45deg,#eee 25%,transparent 25%);background-size:8px 8px;";
+        row.appendChild(thumb);
+      } else {
+        const img = document.createElement("img");
+        img.src = bgSVGs[b.id];
+        row.appendChild(img);
+      }
+      const label = document.createElement("span");
+      label.textContent = b.name;
+      row.appendChild(label);
+      row.addEventListener("click", ()=>{ currentBg = b.id; renderBgList(); });
+      bgListEl.appendChild(row);
+    });
+  }
+
+  /* ============================ SIDEBAR: lines ============================ */
+  function renderLineList(){
+    lineListEl.innerHTML = "";
+    if (state.lines.length === 0){
+      const p = document.createElement("div");
+      p.className = "empty-note";
+      p.textContent = "No lines yet. Tap + to create one, then trace it onto the map.";
+      lineListEl.appendChild(p);
+    }
+    state.lines.forEach(l=>{
+      const row = document.createElement("div");
+      row.className = "line-row" + (l.id === selectedLineId ? " selected" : "");
+      row.style.setProperty("--row-color", l.color);
+
+      const sw = document.createElement("div");
+      sw.className = "swatch";
+      sw.style.background = l.color;
+      sw.title = "Change color";
+      sw.addEventListener("click", (e)=>{
+        e.stopPropagation();
+        openColorPopoverFor = (openColorPopoverFor === l.id) ? null : l.id;
+        renderLineList();
+      });
+      row.appendChild(sw);
+
+      if (openColorPopoverFor === l.id){
+        const pop = document.createElement("div");
+        pop.className = "color-pop";
+        PALETTE.forEach(c=>{
+          const psw = document.createElement("div");
+          psw.className = "pswatch" + (c === l.color ? " selected" : "");
+          psw.style.background = c;
+          psw.addEventListener("click", (e)=>{
+            e.stopPropagation();
+            l.color = c;
+            openColorPopoverFor = null;
+            renderLineList();
+          });
+          pop.appendChild(psw);
+        });
+        row.appendChild(pop);
+      }
+
+      const modeBtn = document.createElement("button");
+      modeBtn.className = "mode-toggle";
+      modeBtn.textContent = l.numbered ? "#" : "Aa";
+      modeBtn.title = "Switch between name and number";
+      modeBtn.addEventListener("click", (e)=>{
+        e.stopPropagation();
+        if (l.numbered){
+          const v = prompt("Name for this line:", l.name || ("Line " + l.id));
+          if (v && v.trim()){ l.numbered = false; l.name = v.trim(); renderLineList(); renderLegend(); }
+        } else {
+          const v = prompt("Number for this line:", l.number || "1");
+          if (v && v.trim()){ l.numbered = true; l.number = v.trim(); renderLineList(); renderLegend(); }
+        }
+      });
+      row.appendChild(modeBtn);
+
+      const inp = document.createElement("input");
+      inp.className = "lname";
+      inp.value = lineLabel(l);
+      inp.addEventListener("click", e=>e.stopPropagation());
+      inp.addEventListener("change", ()=>{
+        if (l.numbered) l.number = inp.value || l.number;
+        else l.name = inp.value || l.name;
+        renderLegend();
+      });
+      row.appendChild(inp);
+
+      const count = document.createElement("div");
+      count.className = "lcount";
+      count.textContent = l.stationIds.length + " stops";
+      row.appendChild(count);
+
+      const del = document.createElement("div");
+      del.className = "ldel";
+      del.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>`;
+      del.addEventListener("click", (e)=>{
+        e.stopPropagation();
+        state.lines = state.lines.filter(x=>x.id!==l.id);
+        trains = trains.filter(t=>t.lineId!==l.id);
+        if (selectedLineId === l.id) selectedLineId = null;
+        renderLineList(); rebuildTrains(); renderLegend(); showToast("Line deleted");
+      });
+      row.appendChild(del);
+
+      row.addEventListener("click", ()=>{
+        selectedLineId = (selectedLineId === l.id) ? null : l.id;
+        renderLineList();
+      });
+
+      lineListEl.appendChild(row);
+    });
+    document.getElementById("statLines").textContent = state.lines.length;
+    document.getElementById("statStations").textContent = state.stations.length;
+    document.getElementById("statTrains").textContent = trains.length;
+  }
+
+  function renderLegend(){
+    legendItemsEl.innerHTML = "";
+    state.lines.forEach(l=>{
+      const item = document.createElement("div");
+      item.className = "legend-item";
+      item.innerHTML = `<div class="legend-dot" style="background:${l.color}"></div><span>${escapeHtml(lineLabel(l))}</span>`;
+      legendItemsEl.appendChild(item);
+    });
+    if (state.lines.length === 0){
+      legendItemsEl.innerHTML = `<div style="opacity:.6">No lines yet</div>`;
+    }
+  }
+
+  function escapeHtml(s){
+    const d = document.createElement("div");
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  /* ============================ TOOLS ============================ */
+  const toolHints = {
+    select: "Drag stations to move them. Right-click a station to rename it.",
+    station: "Click anywhere on the canvas to place a new station.",
+    line: "Use the + in Line Manager to create a line, then trace it by clicking stations.",
+    erase: "Click a station to delete it, or click a line segment to remove that line.",
+  };
+  document.querySelectorAll(".tool").forEach(t=>{
+    t.addEventListener("click", ()=>{
+      setTool(t.dataset.tool);
+      document.getElementById("toolHint").textContent = toolHints[tool];
+      lineBuilder = null;
+      pendingLine = null;
+      if (tool === "line"){
+        document.getElementById("toolHint").textContent = "Open Line Manager (+) to create a new line first.";
+      }
+    });
+  });
+
+  document.getElementById("btnNewLine").addEventListener("click", ()=>{
+    openColorPopoverFor = null;
+    openCreatePanel();
+  });
+
+  document.addEventListener("click", ()=>{
+    if (openColorPopoverFor !== null){ openColorPopoverFor = null; renderLineList(); }
+  });
+
+  /* ============================ COORD HELPERS ============================ */
+  function screenToWorld(px, py){
+    return { x: (px - view.x) / view.scale, y: (py - view.y) / view.scale };
+  }
+  function getPointerPos(e){
+    const rect = canvas.getBoundingClientRect();
+    const cx = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+    const cy = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
+    return { sx: cx, sy: cy, ...screenToWorld(cx, cy) };
+  }
+  function stationAt(wx, wy){
+    let best = null, bestD = SNAP_DIST / view.scale;
+    for (const st of state.stations){
+      const d = Math.hypot(st.x - wx, st.y - wy);
+      if (d < bestD){ bestD = d; best = st; }
+    }
+    return best;
+  }
+
+  /* ============================ INTERACTIONS ============================ */
+  let didDrag = false;
+
+  canvas.addEventListener("pointerdown", (e)=>{
+    canvas.setPointerCapture(e.pointerId);
+    const p = getPointerPos(e);
+    didDrag = false;
+
+    if (tool === "select"){
+      const st = stationAt(p.x, p.y);
+      if (st){
+        dragging = { id: st.id, offsetX: p.x - st.x, offsetY: p.y - st.y };
+      } else {
+        panning = { startSX: p.sx, startSY: p.sy, ox: view.x, oy: view.y };
+      }
+    } else if (tool === "station"){
+      const st = { id: nextStationId++, x: p.x, y: p.y, name: "Station " + (state.stations.length+1) };
+      state.stations.push(st);
+      renderLineList();
+    } else if (tool === "line"){
+      if (!pendingLine){
+        showToast("Tap + in Line Manager to create a line first");
+      } else {
+        const st = stationAt(p.x, p.y);
+        if (st){
+          if (!lineBuilder) lineBuilder = [];
+          if (lineBuilder[lineBuilder.length-1] !== st.id) lineBuilder.push(st.id);
+        }
+      }
+    } else if (tool === "erase"){
+      const st = stationAt(p.x, p.y);
+      if (st){
+        state.stations = state.stations.filter(s=>s.id!==st.id);
+        state.lines.forEach(l=>{ l.stationIds = l.stationIds.filter(id=>id!==st.id); });
+        state.lines = state.lines.filter(l=>l.stationIds.length>1);
+        rebuildTrains();
+        renderLineList();
+        showToast("Station deleted");
+      } else {
+        const hit = lineSegmentAt(p.x, p.y);
+        if (hit){
+          state.lines = state.lines.filter(l=>l.id!==hit.id);
+          rebuildTrains();
+          renderLineList();
+          showToast("Line deleted");
+        }
+      }
+    }
+  });
+
+  canvas.addEventListener("pointermove", (e)=>{
+    const p = getPointerPos(e);
+    if (dragging){
+      didDrag = true;
+      const st = state.stations.find(s=>s.id===dragging.id);
+      if (st){ st.x = p.x - dragging.offsetX; st.y = p.y - dragging.offsetY; }
+    } else if (panning){
+      view.x = panning.ox + (p.sx - panning.startSX);
+      view.y = panning.oy + (p.sy - panning.startSY);
+    }
+  });
+
+  canvas.addEventListener("pointerup", (e)=>{
+    if (dragging && !didDrag){
+      // click without drag on select tool -> nothing special
+    }
+    dragging = null;
+    panning = null;
+  });
+
+  canvas.addEventListener("contextmenu", (e)=>{
+    e.preventDefault();
+    const p = getPointerPos(e);
+    const st = stationAt(p.x, p.y);
+    if (st){
+      const name = prompt("Rename station:", st.name);
+      if (name && name.trim()) st.name = name.trim();
+      renderLineList();
+    }
+  });
+
+  canvas.addEventListener("wheel", (e)=>{
+    e.preventDefault();
+    const p = getPointerPos(e);
+    const factor = e.deltaY < 0 ? 1.08 : 0.92;
+    zoomAt(p.sx, p.sy, factor);
+  }, { passive:false });
+
+  function zoomAt(sx, sy, factor){
+    const before = screenToWorld(sx, sy);
+    view.scale = Math.min(3, Math.max(0.35, view.scale * factor));
+    const after = { x: before.x*view.scale+view.x, y: before.y*view.scale+view.y };
+    view.x += sx - after.x;
+    view.y += sy - after.y;
+  }
+
+  document.getElementById("zoomIn").addEventListener("click", ()=>zoomAt(canvas.clientWidth/2, canvas.clientHeight/2, 1.2));
+  document.getElementById("zoomOut").addEventListener("click", ()=>zoomAt(canvas.clientWidth/2, canvas.clientHeight/2, 0.83));
+  document.getElementById("zoomReset").addEventListener("click", ()=>{ view = {x:0,y:0,scale:1}; });
+
+  window.addEventListener("keydown", (e)=>{
+    if (tool === "line" && lineBuilder && pendingLine){
+      if (e.key === "Enter"){
+        if (lineBuilder.length >= 2){
+          const line = {
+            id: nextLineId++,
+            name: pendingLine.numbered ? "" : pendingLine.name,
+            number: pendingLine.numbered ? pendingLine.number : "",
+            numbered: pendingLine.numbered,
+            color: pendingLine.color,
+            stationIds: lineBuilder.slice(),
+          };
+          state.lines.push(line);
+          selectedLineId = line.id;
+          rebuildTrains();
+          renderLineList();
+          showToast("Line " + lineLabel(line) + " created with " + lineBuilder.length + " stops");
+        }
+        lineBuilder = null;
+        pendingLine = null;
+        setTool("select");
+        document.getElementById("toolHint").textContent = toolHints.select;
+      } else if (e.key === "Escape"){
+        lineBuilder = null;
+        pendingLine = null;
+        setTool("select");
+        document.getElementById("toolHint").textContent = toolHints.select;
+      }
+    }
+  });
+
+  function lineSegmentAt(wx, wy){
+    const tol = 8 / view.scale;
+    for (const l of state.lines){
+      const pts = pathForLine(l);
+      for (let i=0;i<pts.length-1;i++){
+        const d = distToSeg(wx, wy, pts[i].x, pts[i].y, pts[i+1].x, pts[i+1].y);
+        if (d < tol) return l;
+      }
+    }
+    return null;
+  }
+  function distToSeg(px,py,x1,y1,x2,y2){
+    const dx=x2-x1, dy=y2-y1;
+    const len2 = dx*dx+dy*dy || 1;
+    let t = ((px-x1)*dx+(py-y1)*dy)/len2;
+    t = Math.max(0, Math.min(1, t));
+    const cx = x1+t*dx, cy = y1+t*dy;
+    return Math.hypot(px-cx, py-cy);
+  }
+
+  /* ============================ LINE PATH / OFFSETS ============================ */
+  function pathForLine(line){
+    return line.stationIds.map(id => state.stations.find(s=>s.id===id)).filter(Boolean);
+  }
+
+  // compute perpendicular offset for parallel lines sharing the same edge
+  function edgeKey(aId,bId){ return aId<bId ? aId+"_"+bId : bId+"_"+aId; }
+
+  function computeEdgeOffsets(){
+    const edgeLines = {}; // key -> [lineId,...]
+    state.lines.forEach(l=>{
+      for (let i=0;i<l.stationIds.length-1;i++){
+        const k = edgeKey(l.stationIds[i], l.stationIds[i+1]);
+        (edgeLines[k] = edgeLines[k] || []).push(l.id);
+      }
+    });
+    return edgeLines;
+  }
+
+  /* ============================ TRAINS ============================ */
+  function rebuildTrains(){
+    trains = [];
+    state.lines.forEach(l=>{
+      if (l.stationIds.length >= 2){
+        trains.push({ lineId: l.id, t: Math.random()*2, dir: 1 });
+        if (l.stationIds.length >= 3){
+          trains.push({ lineId: l.id, t: Math.random()*2, dir: -1 });
+        }
+      }
+    });
+    renderLineList();
+  }
+
+  function segLengthsForLine(pts){
+    const lens = [];
+    for (let i=0;i<pts.length-1;i++) lens.push(Math.hypot(pts[i+1].x-pts[i].x, pts[i+1].y-pts[i].y));
+    return lens;
+  }
+
+  function updateTrains(dt){
+    trains.forEach(tr=>{
+      const line = state.lines.find(l=>l.id===tr.lineId);
+      if (!line) return;
+      const pts = pathForLine(line);
+      if (pts.length < 2) return;
+      const totalSegs = pts.length - 1;
+      const speed = TRAIN_SPEED * 3.2; // segments per second
+      tr.t += dt * speed * tr.dir;
+      if (tr.t > totalSegs){ tr.t = totalSegs; tr.dir = -1; }
+      if (tr.t < 0){ tr.t = 0; tr.dir = 1; }
+    });
+  }
+
+  function trainPosition(tr){
+    const line = state.lines.find(l=>l.id===tr.lineId);
+    if (!line) return null;
+    const pts = pathForLine(line);
+    if (pts.length < 2) return null;
+    let segIndex = Math.floor(tr.t);
+    segIndex = Math.max(0, Math.min(pts.length-2, segIndex));
+    const localT = tr.t - segIndex;
+    const a = pts[segIndex], b = pts[segIndex+1];
+    return {
+      x: a.x + (b.x-a.x)*localT,
+      y: a.y + (b.y-a.y)*localT,
+      angle: Math.atan2(b.y-a.y, b.x-a.x),
+      color: line.color,
+    };
+  }
+
+  /* ============================ RENDER ============================ */
+  function drawGrid(){
+    const step = 40;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    ctx.save();
+    ctx.strokeStyle = "rgba(20,30,25,0.045)";
+    ctx.lineWidth = 1;
+    const startX = (view.x % (step*view.scale));
+    const startY = (view.y % (step*view.scale));
+    for (let x = startX; x < w; x += step*view.scale){
+      ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke();
+    }
+    for (let y = startY; y < h; y += step*view.scale){
+      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawBackgroundMap(){
+    if (currentBg === "none") { drawGrid(); return; }
+    const img = bgImages[currentBg];
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    if (img && img.complete){
+      // tile/fit cover
+      const scale = Math.max(w/img.width, h/img.height) * 1.0;
+      const iw = img.width*scale, ih = img.height*scale;
+      ctx.drawImage(img, (w-iw)/2, (h-ih)/2, iw, ih);
+    }
+    ctx.restore();
+  }
+
+  function draw(){
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    ctx.save();
+    ctx.clearRect(0,0,w,h);
+    ctx.fillStyle = "#f6f7f5";
+    ctx.fillRect(0,0,w,h);
+    drawBackgroundMap();
+
+    ctx.translate(view.x, view.y);
+    ctx.scale(view.scale, view.scale);
+
+    // lines
+    const edgeLines = computeEdgeOffsets();
+    const OFFSET_STEP = 6;
+
+    state.lines.forEach(line=>{
+      const pts = pathForLine(line);
+      if (pts.length < 2) return;
+      ctx.beginPath();
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = 5.5 / view.scale > 5.5 ? 5.5 : 5.5;
+      ctx.lineWidth = 5.5;
+      ctx.strokeStyle = line.color;
+
+      for (let i=0;i<pts.length-1;i++){
+        const a = pts[i], b = pts[i+1];
+        const key = edgeKey(a.id, b.id);
+        const group = edgeLines[key];
+        const idx = group.indexOf(line.id);
+        const n = group.length;
+        const offsetIdx = idx - (n-1)/2;
+        const dx = b.x-a.x, dy = b.y-a.y;
+        const len = Math.hypot(dx,dy) || 1;
+        const nx = -dy/len, ny = dx/len;
+        const off = offsetIdx * OFFSET_STEP;
+        const ax = a.x + nx*off, ay = a.y + ny*off;
+        const bx = b.x + nx*off, by = b.y + ny*off;
+        if (i===0) ctx.moveTo(ax,ay); else ctx.lineTo(ax,ay);
+        ctx.lineTo(bx,by);
+      }
+      ctx.stroke();
+    });
+
+    // numbered-line endpoint badges
+    state.lines.forEach(line=>{
+      if (!line.numbered || !line.number) return;
+      const pts = pathForLine(line);
+      if (pts.length < 2) return;
+      [pts[0], pts[pts.length-1]].forEach(pt=>{
+        const bx = pt.x, by = pt.y - STATION_R - 13;
+        ctx.beginPath();
+        ctx.arc(bx, by, 9, 0, Math.PI*2);
+        ctx.fillStyle = line.color;
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "#ffffff";
+        ctx.stroke();
+        ctx.font = "700 10px -apple-system, Segoe UI, Roboto, sans-serif";
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(String(line.number), bx, by + 0.5);
+        ctx.textAlign = "left";
+      });
+    });
+
+    // if building a line, draw preview
+    if (tool === "line" && lineBuilder && lineBuilder.length){
+      ctx.beginPath();
+      ctx.setLineDash([6,6]);
+      ctx.strokeStyle = pendingLine ? pendingLine.color : "#16211c";
+      ctx.lineWidth = 3;
+      lineBuilder.forEach((id,i)=>{
+        const st = state.stations.find(s=>s.id===id);
+        if (!st) return;
+        if (i===0) ctx.moveTo(st.x, st.y); else ctx.lineTo(st.x, st.y);
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // stations
+    state.stations.forEach(st=>{
+      const isInterchange = state.lines.filter(l=>l.stationIds.includes(st.id)).length > 1;
+      ctx.beginPath();
+      ctx.arc(st.x, st.y, isInterchange ? STATION_R+2 : STATION_R, 0, Math.PI*2);
+      ctx.fillStyle = "#ffffff";
+      ctx.fill();
+      ctx.lineWidth = isInterchange ? 3.5 : 3;
+      ctx.strokeStyle = "#16211c";
+      ctx.stroke();
+
+      // label
+      ctx.font = "600 12px -apple-system, Segoe UI, Roboto, sans-serif";
+      ctx.fillStyle = "#16211c";
+      ctx.textBaseline = "middle";
+      const label = st.name;
+      const tw = ctx.measureText(label).width;
+      const lx = st.x + STATION_R + 8;
+      const ly = st.y;
+      ctx.fillStyle = "rgba(246,247,245,0.86)";
+      ctx.fillRect(lx-3, ly-9, tw+6, 18);
+      ctx.fillStyle = "#16211c";
+      ctx.fillText(label, lx, ly);
+    });
+
+    // trains
+    trains.forEach(tr=>{
+      const pos = trainPosition(tr);
+      if (!pos) return;
+      ctx.save();
+      ctx.translate(pos.x, pos.y);
+      ctx.rotate(pos.angle);
+      const tw = 16, th = 8;
+      ctx.beginPath();
+      ctx.roundRect ? ctx.roundRect(-tw/2,-th/2,tw,th,3) : ctx.rect(-tw/2,-th/2,tw,th);
+      ctx.fillStyle = pos.color;
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = "#ffffff";
+      ctx.stroke();
+      ctx.restore();
+    });
+
+    ctx.restore();
+  }
+
+  /* ============================ LOOP ============================ */
+  let lastTime = performance.now();
+  function loop(now){
+    const dt = Math.min(0.05, (now - lastTime)/1000);
+    lastTime = now;
+    updateTrains(dt);
+    draw();
+    document.getElementById("statTrains").textContent = trains.length;
+    requestAnimationFrame(loop);
+  }
+
+  /* ============================ TOAST ============================ */
+  let toastTimer = null;
+  function showToast(msg){
+    toast.textContent = msg;
+    toast.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(()=>toast.classList.remove("show"), 1800);
+  }
+
+  /* ============================ PERSISTENCE ============================ */
+  const STORAGE_KEY = "transit_subway_map_v1";
+
+  function serialize(){
+    return JSON.stringify({
+      name: mapNameInput.value,
+      stations: state.stations,
+      lines: state.lines,
+      nextStationId, nextLineId,
+      bg: currentBg,
+    }, null, 2);
+  }
+
+  function loadFromObj(obj){
+    state.stations = obj.stations || [];
+    state.lines = obj.lines || [];
+    nextStationId = obj.nextStationId || (Math.max(0,...state.stations.map(s=>s.id))+1);
+    nextLineId = obj.nextLineId || (Math.max(0,...state.lines.map(l=>l.id))+1);
+    currentBg = obj.bg || "none";
+    mapNameInput.value = obj.name || "Untitled Metro Map";
+    selectedLineId = null;
+    rebuildTrains();
+    renderLineList();
+    renderBgList();
+    renderLegend();
+  }
+
+  document.getElementById("btnSave").addEventListener("click", ()=>{
+    localStorage.setItem(STORAGE_KEY, serialize());
+    showToast("Map saved to this browser");
+  });
+
+  document.getElementById("btnExport").addEventListener("click", ()=>{
+    const blob = new Blob([serialize()], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = (mapNameInput.value || "subway-map").replace(/\s+/g,"-").toLowerCase() + ".json";
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast("Map exported");
+  });
+
+  document.getElementById("btnImport").addEventListener("click", ()=>{
+    document.getElementById("fileInput").click();
+  });
+  document.getElementById("fileInput").addEventListener("change", (e)=>{
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      try{
+        const obj = JSON.parse(reader.result);
+        loadFromObj(obj);
+        showToast("Map imported");
+      }catch(err){
+        alert("Could not read that file as a valid map.");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  });
+
+  document.getElementById("btnClear").addEventListener("click", ()=>{
+    if (confirm("Clear the entire map? This cannot be undone.")){
+      state = { stations:[], lines:[] };
+      trains = [];
+      selectedLineId = null;
+      nextStationId = 1; nextLineId = 1;
+      renderLineList();
+      renderLegend();
+      showToast("Map cleared");
+    }
+  });
+
+  document.getElementById("btnLegend").addEventListener("click", ()=>{
+    legendEl.classList.toggle("show");
+  });
+
+  /* ============================ SEED EXAMPLE MAP ============================ */
+  function seedExample(){
+    const s = (x,y,name)=>({id:nextStationId++, x, y, name});
+    const st = [
+      s(160,220,"Willow Park"), s(300,220,"Central Square"), s(440,220,"Old Market"),
+      s(440,360,"Riverside"), s(580,360,"East Harbor"), s(300,360,"Museum Row"),
+      s(300,500,"South Gate"), s(160,500,"Greenfield"), s(580,220,"Tech Quarter"),
+    ];
+    state.stations = st;
+    state.lines = [
+      { id: nextLineId++, name: "", number: "1", numbered: true, color: PALETTE[0], stationIds:[st[0].id,st[1].id,st[2].id,st[8].id] },
+      { id: nextLineId++, name: "", number: "2", numbered: true, color: PALETTE[1], stationIds:[st[7].id,st[6].id,st[5].id,st[1].id] },
+      { id: nextLineId++, name: "Riverline", number: "", numbered: false, color: PALETTE[2], stationIds:[st[5].id,st[2].id,st[3].id,st[4].id] },
+    ];
+    rebuildTrains();
+  }
+
+  /* ============================ INIT ============================ */
+  function init(){
+    resizeCanvas();
+    renderBgList();
+    seedExample();
+    renderLineList();
+    renderLegend();
+    requestAnimationFrame(loop);
+  }
+  init();
+
+})();
+</script>
+</body>
+</html>
