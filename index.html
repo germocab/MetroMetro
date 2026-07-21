@@ -322,7 +322,7 @@
   <div class="brand">
     <div class="mark"></div>
     <div>
-      <h1>Transit <span style="font-weight:500;color:var(--ink-soft)">v1.4.7</span></h1>
+      <h1>Transit <span style="font-weight:500;color:var(--ink-soft)">v1.4.7.5</span></h1>
     </div>
   </div>
   <div class="map-title-wrap">
@@ -428,6 +428,7 @@
   const STATION_R = 9;
   const TRAIN_SPEED = 0.14; // fraction of segment per second baseline (scaled by segment length)
   const SNAP_DIST = 16;
+  const EDGE_OFFSET_STEP = 6; // perpendicular offset step between parallel lines sharing an edge (used for drawing AND hit-testing)
 
   /* ============================ STATE ============================ */
   let state = {
@@ -1516,14 +1517,31 @@
 
   function lineSegmentDetailAt(wx, wy){
     const tol = 8 / view.scale;
-    for (const l of state.lines){
-      const pts = pathForLine(l);
+    const edgeLines = computeEdgeOffsets();
+    let best = null, bestD = tol;
+    state.lines.forEach(line=>{
+      const pts = pathForLine(line);
       for (let i=0;i<pts.length-1;i++){
-        const d = distToSeg(wx, wy, pts[i].x, pts[i].y, pts[i+1].x, pts[i+1].y);
-        if (d < tol) return { line: l, index: i };
+        const a = pts[i], b = pts[i+1];
+        // reproduce the exact perpendicular offset used when drawing this
+        // segment, so the hit-test matches what's actually on screen when
+        // several lines run parallel along the same edge.
+        const key = edgeKey(a.id, b.id);
+        const group = edgeLines[key];
+        const idx = group.indexOf(line.id);
+        const n = group.length;
+        const offsetIdx = idx - (n-1)/2;
+        const dx = b.x-a.x, dy = b.y-a.y;
+        const len = Math.hypot(dx,dy) || 1;
+        const nx = -dy/len, ny = dx/len;
+        const off = offsetIdx * EDGE_OFFSET_STEP;
+        const ax = a.x + nx*off, ay = a.y + ny*off;
+        const bx = b.x + nx*off, by = b.y + ny*off;
+        const d = distToSeg(wx, wy, ax, ay, bx, by);
+        if (d < bestD){ bestD = d; best = { line, index: i }; }
       }
-    }
-    return null;
+    });
+    return best;
   }
   function lineSegmentAt(wx, wy){
     const hit = lineSegmentDetailAt(wx, wy);
@@ -1700,7 +1718,6 @@
 
     // lines
     const edgeLines = computeEdgeOffsets();
-    const OFFSET_STEP = 6;
 
     state.lines.forEach(line=>{
       const pts = pathForLine(line);
@@ -1721,7 +1738,7 @@
         const dx = b.x-a.x, dy = b.y-a.y;
         const len = Math.hypot(dx,dy) || 1;
         const nx = -dy/len, ny = dx/len;
-        const off = offsetIdx * OFFSET_STEP;
+        const off = offsetIdx * EDGE_OFFSET_STEP;
         const ax = a.x + nx*off, ay = a.y + ny*off;
         const bx = b.x + nx*off, by = b.y + ny*off;
         if (i===0) ctx.moveTo(ax,ay); else ctx.lineTo(ax,ay);
