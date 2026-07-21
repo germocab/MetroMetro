@@ -322,7 +322,7 @@
   <div class="brand">
     <div class="mark"></div>
     <div>
-      <h1>Transit <span style="font-weight:500;color:var(--ink-soft)">v1.4.7.5</span></h1>
+      <h1>Transit <span style="font-weight:500;color:var(--ink-soft)">v1.4.8</span></h1>
     </div>
   </div>
   <div class="map-title-wrap">
@@ -365,7 +365,7 @@
         Trains
       </div>
     </div>
-    <div class="hint" id="toolHint">Drag from a station to another to trace a line. Click a segment to delete just that stretch of track. Shift+click or shift-drag to select multiple stations — then drag, right-click, or press Delete to move, connect, or remove them together.</div>
+    <div class="hint" id="toolHint">Drag from a station to another to trace a line. Click a segment for options to delete it. Shift+click or shift-drag to select multiple stations — then drag, right-click, or press Delete to move, connect, or remove them together.</div>
 
     <div class="lm-header">
       <div class="section-title" style="margin:0;">Line Manager</div>
@@ -1152,7 +1152,7 @@
 
   /* ============================ TOOLS ============================ */
   const toolHints = {
-    select: "Drag from a station to another to trace a line. Click a segment to delete just that stretch of track. Shift+click or shift-drag to select multiple stations — then drag, right-click, or press Delete to move, connect, or remove them together.",
+    select: "Drag from a station to another to trace a line. Click a segment for options to delete it. Shift+click or shift-drag to select multiple stations — then drag, right-click, or press Delete to move, connect, or remove them together.",
     station: "Click anywhere on the canvas to place a new station.",
     trains: "Click a line on the map to add a new train to it.",
   };
@@ -1385,7 +1385,18 @@
       const dist = Math.hypot(p.sx - panning.startSX, p.sy - panning.startSY);
       if (dist < 4){
         const hit = lineSegmentDetailAt(p.x, p.y);
-        if (hit){ deleteLineSegment(hit.line, hit.index); panning = null; return; }
+        if (hit){
+          const items = [
+            { label: "Delete Segment", icon: "trash", danger: true, action: ()=> deleteLineSegment(hit.line, hit.index) },
+          ];
+          if (selectedStationIds.length > 1){
+            items.push({ label: "Delete Segments Between Selected (" + selectedStationIds.length + ")", icon: "trash", danger: true, action: ()=> deleteSegmentsBetweenSelected() });
+          }
+          showCtxMenu(p.sx, p.sy, items);
+          suppressNextDocClick = true;
+          panning = null;
+          return;
+        }
       }
     }
     if (rubberBand){
@@ -1432,6 +1443,7 @@
           }
         },
         { label: "Create Line From Selection", icon: "plus", action: ()=> createLineFromSelection(menuX, menuY) },
+        { label: "Delete Segments Between Selected", icon: "trash", danger: true, action: ()=> deleteSegmentsBetweenSelected() },
         { label: "Delete " + n + " Stations", icon: "trash", danger: true, action: ()=> deleteSelectedStations() },
       ]);
     } else if (st){
@@ -1464,6 +1476,7 @@
       if (selectedStationIds.length > 1){
         items.push(
           { label: "Create Line From Selection", icon: "plus", action: ()=> createLineFromSelection(menuX, menuY) },
+          { label: "Delete Segments Between Selected", icon: "trash", danger: true, action: ()=> deleteSegmentsBetweenSelected() },
           { label: "Delete " + selectedStationIds.length + " Stations", icon: "trash", danger: true, action: ()=> deleteSelectedStations() }
         );
       }
@@ -1554,6 +1567,67 @@
     t = Math.max(0, Math.min(1, t));
     const cx = x1+t*dx, cy = y1+t*dy;
     return Math.hypot(px-cx, py-cy);
+  }
+
+  // Remove every edge — across every line — that directly connects two
+  // stations that are both in the current selection. Each line can be cut
+  // in several places at once; every resulting piece with 2+ stations
+  // becomes its own line (same color/label), pieces of length 1 are dropped.
+  function deleteSegmentsBetweenSelected(){
+    if (selectedStationIds.length < 2){
+      showToast("Select at least 2 stations first");
+      return;
+    }
+    const sel = new Set(selectedStationIds);
+    let removedCount = 0;
+    const newLines = [];
+
+    state.lines.forEach(line=>{
+      const ids = line.stationIds;
+      const chains = [];
+      let current = [ids[0]];
+      for (let i=0;i<ids.length-1;i++){
+        const a = ids[i], b = ids[i+1];
+        if (sel.has(a) && sel.has(b)){
+          removedCount++;
+          chains.push(current);
+          current = [b];
+        } else {
+          current.push(b);
+        }
+      }
+      chains.push(current);
+
+      const validChains = chains.filter(c=>c.length>=2);
+      if (validChains.length === 0) return; // whole line disappears
+
+      line.stationIds = validChains[0];
+      newLines.push(line);
+      for (let k=1;k<validChains.length;k++){
+        newLines.push({
+          id: nextLineId++,
+          name: line.numbered ? "" : (line.name ? line.name + " (" + (k+1) + ")" : ""),
+          number: line.numbered ? line.number : "",
+          numbered: line.numbered,
+          color: line.color,
+          stationIds: validChains[k],
+        });
+      }
+    });
+
+    if (removedCount === 0){
+      showToast("No direct segments between the selected stations");
+      return;
+    }
+
+    state.lines = newLines;
+    if (selectedLineId !== null && !state.lines.some(l=>l.id===selectedLineId)) selectedLineId = null;
+    rebuildTrains();
+    renderLineList();
+    renderLegend();
+    renderStationList();
+    showToast(removedCount + " segment" + (removedCount===1?"":"s") + " removed");
+    pushHistory();
   }
 
   // Remove a single edge (between stationIds[index] and stationIds[index+1])
