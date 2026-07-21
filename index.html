@@ -322,7 +322,7 @@
   <div class="brand">
     <div class="mark"></div>
     <div>
-      <h1>Transit <span style="font-weight:500;color:var(--ink-soft)">v1.4.5</span></h1>
+      <h1>Transit <span style="font-weight:500;color:var(--ink-soft)">v1.4.7</span></h1>
     </div>
   </div>
   <div class="map-title-wrap">
@@ -365,7 +365,7 @@
         Trains
       </div>
     </div>
-    <div class="hint" id="toolHint">Drag from a station to another to trace a line. Shift+click or shift-drag to select multiple stations — then drag, right-click, or press Delete to move, connect, or remove them together.</div>
+    <div class="hint" id="toolHint">Drag from a station to another to trace a line. Click a segment to delete just that stretch of track. Shift+click or shift-drag to select multiple stations — then drag, right-click, or press Delete to move, connect, or remove them together.</div>
 
     <div class="lm-header">
       <div class="section-title" style="margin:0;">Line Manager</div>
@@ -1151,7 +1151,7 @@
 
   /* ============================ TOOLS ============================ */
   const toolHints = {
-    select: "Drag from a station to another to trace a line. Shift+click or shift-drag to select multiple stations — then drag, right-click, or press Delete to move, connect, or remove them together.",
+    select: "Drag from a station to another to trace a line. Click a segment to delete just that stretch of track. Shift+click or shift-drag to select multiple stations — then drag, right-click, or press Delete to move, connect, or remove them together.",
     station: "Click anywhere on the canvas to place a new station.",
     trains: "Click a line on the map to add a new train to it.",
   };
@@ -1379,6 +1379,14 @@
   });
 
   canvas.addEventListener("pointerup", (e)=>{
+    if (panning && tool === "select" && !e.shiftKey){
+      const p = getPointerPos(e);
+      const dist = Math.hypot(p.sx - panning.startSX, p.sy - panning.startSY);
+      if (dist < 4){
+        const hit = lineSegmentDetailAt(p.x, p.y);
+        if (hit){ deleteLineSegment(hit.line, hit.index); panning = null; return; }
+      }
+    }
     if (rubberBand){
       const x1 = Math.min(rubberBand.startSX, rubberBand.curSX), x2 = Math.max(rubberBand.startSX, rubberBand.curSX);
       const y1 = Math.min(rubberBand.startSY, rubberBand.curSY), y2 = Math.max(rubberBand.startSY, rubberBand.curSY);
@@ -1440,15 +1448,18 @@
         { label: "Delete Station", icon: "trash", danger: true, action: ()=> deleteStation(st.id) },
       ]);
     } else {
-      const items = [
-        { label: "Create Station Here", icon: "plus", action: ()=>{
-            const newSt = { id: nextStationId++, x: p.x, y: p.y, name: "Station " + (state.stations.length+1) };
-            state.stations.push(newSt);
-            renderLineList();
-            pushHistory();
-          }
-        },
-      ];
+      const items = [];
+      const segHit = lineSegmentDetailAt(p.x, p.y);
+      if (segHit){
+        items.push({ label: "Delete Segment (" + lineLabel(segHit.line) + ")", icon: "trash", danger: true, action: ()=> deleteLineSegment(segHit.line, segHit.index) });
+      }
+      items.push({ label: "Create Station Here", icon: "plus", action: ()=>{
+          const newSt = { id: nextStationId++, x: p.x, y: p.y, name: "Station " + (state.stations.length+1) };
+          state.stations.push(newSt);
+          renderLineList();
+          pushHistory();
+        }
+      });
       if (selectedStationIds.length > 1){
         items.push(
           { label: "Create Line From Selection", icon: "plus", action: ()=> createLineFromSelection(menuX, menuY) },
@@ -1503,16 +1514,20 @@
     }
   });
 
-  function lineSegmentAt(wx, wy){
+  function lineSegmentDetailAt(wx, wy){
     const tol = 8 / view.scale;
     for (const l of state.lines){
       const pts = pathForLine(l);
       for (let i=0;i<pts.length-1;i++){
         const d = distToSeg(wx, wy, pts[i].x, pts[i].y, pts[i+1].x, pts[i+1].y);
-        if (d < tol) return l;
+        if (d < tol) return { line: l, index: i };
       }
     }
     return null;
+  }
+  function lineSegmentAt(wx, wy){
+    const hit = lineSegmentDetailAt(wx, wy);
+    return hit ? hit.line : null;
   }
   function distToSeg(px,py,x1,y1,x2,y2){
     const dx=x2-x1, dy=y2-y1;
@@ -1522,6 +1537,43 @@
     const cx = x1+t*dx, cy = y1+t*dy;
     return Math.hypot(px-cx, py-cy);
   }
+
+  // Remove a single edge (between stationIds[index] and stationIds[index+1])
+  // from a line, without deleting the stations or the rest of the route.
+  // Cutting a middle edge splits the line into two separate lines.
+  function deleteLineSegment(line, index){
+    const ids = line.stationIds;
+    const before = ids.slice(0, index+1);
+    const after = ids.slice(index+1);
+    const label = lineLabel(line);
+
+    if (before.length < 2 && after.length < 2){
+      state.lines = state.lines.filter(l=>l.id!==line.id);
+    } else if (before.length < 2){
+      line.stationIds = after;
+    } else if (after.length < 2){
+      line.stationIds = before;
+    } else {
+      line.stationIds = before;
+      state.lines.push({
+        id: nextLineId++,
+        name: line.numbered ? "" : (line.name ? line.name + " (2)" : ""),
+        number: line.numbered ? line.number : "",
+        numbered: line.numbered,
+        color: line.color,
+        stationIds: after,
+      });
+    }
+
+    if (selectedLineId !== null && !state.lines.some(l=>l.id===selectedLineId)) selectedLineId = null;
+    rebuildTrains();
+    renderLineList();
+    renderLegend();
+    renderStationList();
+    showToast("Segment removed from " + label);
+    pushHistory();
+  }
+
 
   /* ============================ LINE PATH / OFFSETS ============================ */
   // Determine whether the line segments touching this station run mostly
