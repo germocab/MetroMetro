@@ -229,6 +229,28 @@
   .ctx-item.danger:hover{ background:#fdecec; }
   .ctx-item svg{ width:14px; height:14px; stroke:currentColor; flex-shrink:0; }
 
+  /* Line-assign popup (shown after dragging between stations) */
+  .assign-pop{
+    position:absolute; z-index:60; background:var(--panel); border:1px solid var(--line);
+    border-radius:12px; box-shadow:var(--shadow); padding:10px; width:220px;
+  }
+  .assign-pop .ap-title{ font-size:11px; text-transform:uppercase; letter-spacing:.06em; font-weight:700; color:var(--ink-soft); margin:2px 6px 8px; }
+  .assign-pop .ap-list{ display:flex; flex-direction:column; gap:4px; max-height:200px; overflow-y:auto; margin-bottom:6px; }
+  .assign-pop .ap-item{
+    display:flex; align-items:center; gap:8px; padding:7px 8px; border-radius:8px;
+    font-size:13px; font-weight:600; color:var(--ink); cursor:pointer;
+  }
+  .assign-pop .ap-item:hover{ background:var(--bg); }
+  .assign-pop .ap-item .ap-dot{ width:12px; height:12px; border-radius:50%; flex-shrink:0; box-shadow: inset 0 0 0 2px rgba(255,255,255,.6), 0 0 0 1px rgba(0,0,0,.06); }
+  .assign-pop .ap-item .ap-sub{ font-size:11px; color:var(--ink-soft); font-weight:500; margin-left:auto; }
+  .assign-pop .ap-create{
+    display:flex; align-items:center; justify-content:center; gap:6px;
+    padding:8px; border-radius:8px; border:1px dashed var(--line); background:var(--bg);
+    font-size:12.5px; font-weight:700; color:var(--accent); cursor:pointer; margin-top:2px;
+  }
+  .assign-pop .ap-create:hover{ background:var(--accent-soft); border-color:var(--accent); }
+  .assign-pop .ap-empty{ font-size:12px; color:var(--ink-soft); padding:4px 6px 8px; }
+
   input[type="file"]{ display:none; }
 
   ::-webkit-scrollbar{ width:8px; }
@@ -241,7 +263,7 @@
   <div class="brand">
     <div class="mark"></div>
     <div>
-      <h1>Transit <span style="font-weight:500;color:var(--ink-soft)">v1.1</span></h1>
+      <h1>Transit <span style="font-weight:500;color:var(--ink-soft)">v1.1.2</span></h1>
     </div>
   </div>
   <div class="map-title-wrap">
@@ -271,16 +293,12 @@
         <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>
         Station
       </div>
-      <div class="tool" data-tool="line" title="Draw line">
-        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="18" r="2.2"/><circle cx="19" cy="6" r="2.2"/><path d="M6.8 16.2L17.2 7.8"/></svg>
-        Line
-      </div>
       <div class="tool" data-tool="trains" title="Add trains to a line">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="12" rx="3"/><path d="M8 21l1.5-3M16 21l-1.5-3M5 13h14"/></svg>
         Trains
       </div>
     </div>
-    <div class="hint" id="toolHint">Drag stations to move them. Right-click a station for options.</div>
+    <div class="hint" id="toolHint">Drag a station onto another to trace a line. Drop on empty space to just move it.</div>
 
     <div class="lm-header">
       <div class="section-title" style="margin:0;">Line Manager</div>
@@ -306,6 +324,7 @@
       </div>
       <div class="floating-toast" id="toast"></div>
       <div class="ctx-menu" id="ctxMenu"></div>
+      <div class="assign-pop" id="assignPop" style="display:none;"></div>
     </div>
   </main>
 </div>
@@ -351,11 +370,16 @@
   let selectedLineId = null;
 
   let view = { x: 0, y: 0, scale: 1 };
-  let dragging = null; // {type:'station', id, offsetX, offsetY}
+  // dragging: {id, offsetX, offsetY, path:[stationIds...], mode: null|'move'|'trace', startX, startY, curWX, curWY}
+  let dragging = null;
   let panning = null;
-  let lineBuilder = null; // array of station ids being connected
-  let pendingLine = null; // {color, numbered, name, number} being traced onto the canvas
   let openColorPopoverFor = null; // line id whose color popover is open
+  let assignPopupOpen = false;    // whether the line-assign popup is open
+  let assignPopupPath = null;     // station id path pending assignment
+  let assignPopupCreating = false; // whether the inline "create line" mini-form is showing
+  let assignPopupDraft = null;    // draft for inline create form inside the popup
+
+  const DRAG_MOVE_THRESHOLD = 5; // px (world units) before we decide move-vs-trace
 
   let trains = []; // {lineId, t, dir}
 
@@ -394,8 +418,8 @@
     nextLineId = obj.nextLineId;
     selectedLineId = null;
     openColorPopoverFor = null;
-    lineBuilder = null;
-    pendingLine = null;
+    dragging = null;
+    closeAssignPopup();
     rebuildTrains();
     renderLineList();
     renderLegend();
@@ -539,24 +563,28 @@
     cancelBtn.className = "btn";
     cancelBtn.textContent = "Cancel";
     cancelBtn.addEventListener("click", closeCreatePanel);
-    const drawBtn = document.createElement("button");
-    drawBtn.className = "btn primary";
-    drawBtn.textContent = "Trace on map →";
-    drawBtn.addEventListener("click", ()=>{
-      pendingLine = {
-        color: createDraft.color,
-        numbered: createDraft.numbered,
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "btn primary";
+    saveBtn.textContent = "Save";
+    saveBtn.addEventListener("click", ()=>{
+      const line = {
+        id: nextLineId++,
         name: createDraft.numbered ? "" : (createDraft.value || ("Line " + nextLineId)),
         number: createDraft.numbered ? (createDraft.value || String(nextLineId)) : "",
+        numbered: createDraft.numbered,
+        color: createDraft.color,
+        stationIds: [],
       };
-      lineBuilder = [];
-      setTool("line");
-      document.getElementById("toolHint").textContent = "Click stations on the map to add stops. Press Enter to finish the line, Esc to cancel.";
+      state.lines.push(line);
+      selectedLineId = line.id;
+      renderLineList();
+      renderLegend();
       closeCreatePanel();
-      showToast("Now click stations to trace the line");
+      showToast(lineLabel(line) + " added — drag between stations to trace it");
+      pushHistory();
     });
     actions.appendChild(cancelBtn);
-    actions.appendChild(drawBtn);
+    actions.appendChild(saveBtn);
     panel.appendChild(actions);
 
     createPanelEl.appendChild(panel);
@@ -570,6 +598,200 @@
   function lineLabel(l){
     return l.numbered ? ("#" + l.number) : l.name;
   }
+
+  /* ============================ LINE-ASSIGN POPUP ============================ */
+  const assignPopEl = document.getElementById("assignPop");
+
+  function openAssignPopup(sx, sy, path){
+    assignPopupOpen = true;
+    assignPopupPath = path;
+    assignPopupCreating = false;
+    assignPopupDraft = null;
+    renderAssignPopup();
+    positionAssignPopup(sx, sy);
+    assignPopEl.style.display = "block";
+  }
+
+  function closeAssignPopup(){
+    assignPopupOpen = false;
+    assignPopupPath = null;
+    assignPopupCreating = false;
+    assignPopupDraft = null;
+    assignPopEl.style.display = "none";
+    assignPopEl.innerHTML = "";
+  }
+
+  function positionAssignPopup(sx, sy){
+    const wrap = document.getElementById("canvasWrap");
+    const w = 220;
+    const maxX = wrap.clientWidth - w - 10;
+    const maxY = wrap.clientHeight - 260;
+    assignPopEl.style.left = Math.max(6, Math.min(sx - w/2, maxX)) + "px";
+    assignPopEl.style.top = Math.max(6, Math.min(sy + 10, maxY)) + "px";
+  }
+
+  // extend a line's route with a newly traced path of station ids
+  function assignPathToLine(line, path){
+    if (line.stationIds.length === 0){
+      line.stationIds = path.slice();
+    } else {
+      const last = line.stationIds[line.stationIds.length-1];
+      const first = line.stationIds[0];
+      let toAppend = path.slice();
+      if (toAppend[0] === last){
+        toAppend = toAppend.slice(1);
+        line.stationIds = line.stationIds.concat(toAppend);
+      } else if (toAppend[toAppend.length-1] === first){
+        // dragged path arrives at the line's current start; prepend it
+        toAppend = toAppend.slice(0, -1);
+        line.stationIds = toAppend.concat(line.stationIds);
+      } else {
+        // no shared endpoint — just extend the route with the new stops
+        line.stationIds = line.stationIds.concat(toAppend);
+      }
+    }
+    rebuildTrains();
+    renderLineList();
+    renderLegend();
+    showToast(lineLabel(line) + " updated");
+    pushHistory();
+  }
+
+  function renderAssignPopup(){
+    assignPopEl.innerHTML = "";
+    if (!assignPopupOpen || !assignPopupPath) return;
+
+    const panel = document.createElement("div");
+
+    if (assignPopupCreating){
+      if (!assignPopupDraft){
+        assignPopupDraft = { color: nextUnusedColor(), numbered: false, value: "Line " + nextLineId };
+      }
+      const title = document.createElement("div");
+      title.className = "ap-title";
+      title.textContent = "New line";
+      panel.appendChild(title);
+
+      const pal = document.createElement("div");
+      pal.className = "create-palette";
+      pal.style.marginBottom = "10px";
+      PALETTE.forEach(c=>{
+        const sw = document.createElement("div");
+        sw.className = "pswatch" + (c === assignPopupDraft.color ? " selected" : "");
+        sw.style.background = c;
+        sw.addEventListener("click", (e)=>{ e.stopPropagation(); assignPopupDraft.color = c; renderAssignPopup(); });
+        pal.appendChild(sw);
+      });
+      panel.appendChild(pal);
+
+      const seg = document.createElement("div");
+      seg.className = "segmented";
+      seg.style.marginBottom = "8px";
+      seg.style.width = "100%";
+      const nameBtn = document.createElement("button");
+      nameBtn.textContent = "Name"; nameBtn.style.flex = "1";
+      nameBtn.className = assignPopupDraft.numbered ? "" : "active";
+      nameBtn.addEventListener("click", (e)=>{ e.stopPropagation(); if (assignPopupDraft.numbered){ assignPopupDraft.numbered=false; assignPopupDraft.value="Line "+nextLineId; renderAssignPopup(); } });
+      const numBtn = document.createElement("button");
+      numBtn.textContent = "Number"; numBtn.style.flex = "1";
+      numBtn.className = assignPopupDraft.numbered ? "active" : "";
+      numBtn.addEventListener("click", (e)=>{ e.stopPropagation(); if (!assignPopupDraft.numbered){ assignPopupDraft.numbered=true; assignPopupDraft.value=String(nextLineId); renderAssignPopup(); } });
+      seg.appendChild(nameBtn); seg.appendChild(numBtn);
+      panel.appendChild(seg);
+
+      const valInput = document.createElement("input");
+      valInput.type = assignPopupDraft.numbered ? "number" : "text";
+      valInput.value = assignPopupDraft.value;
+      valInput.style.width = "100%";
+      valInput.style.marginBottom = "8px";
+      valInput.addEventListener("click", e=>e.stopPropagation());
+      valInput.addEventListener("input", ()=>{ assignPopupDraft.value = valInput.value; });
+      panel.appendChild(valInput);
+
+      const actions = document.createElement("div");
+      actions.className = "cp-actions";
+      actions.style.marginTop = "0";
+      const backBtn = document.createElement("button");
+      backBtn.className = "btn";
+      backBtn.textContent = "Back";
+      backBtn.addEventListener("click", (e)=>{ e.stopPropagation(); assignPopupCreating = false; renderAssignPopup(); });
+      const saveBtn = document.createElement("button");
+      saveBtn.className = "btn primary";
+      saveBtn.textContent = "Save";
+      saveBtn.addEventListener("click", (e)=>{
+        e.stopPropagation();
+        const line = {
+          id: nextLineId++,
+          name: assignPopupDraft.numbered ? "" : (assignPopupDraft.value || ("Line " + nextLineId)),
+          number: assignPopupDraft.numbered ? (assignPopupDraft.value || String(nextLineId)) : "",
+          numbered: assignPopupDraft.numbered,
+          color: assignPopupDraft.color,
+          stationIds: assignPopupPath.slice(),
+        };
+        state.lines.push(line);
+        selectedLineId = line.id;
+        rebuildTrains();
+        renderLineList();
+        renderLegend();
+        showToast(lineLabel(line) + " created with " + assignPopupPath.length + " stops");
+        pushHistory();
+        closeAssignPopup();
+      });
+      actions.appendChild(backBtn);
+      actions.appendChild(saveBtn);
+      panel.appendChild(actions);
+    } else {
+      const title = document.createElement("div");
+      title.className = "ap-title";
+      title.textContent = "Which line is this?";
+      panel.appendChild(title);
+
+      const list = document.createElement("div");
+      list.className = "ap-list";
+      if (state.lines.length === 0){
+        const empty = document.createElement("div");
+        empty.className = "ap-empty";
+        empty.textContent = "No lines yet — create one below.";
+        list.appendChild(empty);
+      }
+      state.lines.forEach(l=>{
+        const item = document.createElement("div");
+        item.className = "ap-item";
+        const dot = document.createElement("div");
+        dot.className = "ap-dot";
+        dot.style.background = l.color;
+        item.appendChild(dot);
+        const label = document.createElement("span");
+        label.textContent = lineLabel(l) || ("Line " + l.id);
+        item.appendChild(label);
+        const sub = document.createElement("span");
+        sub.className = "ap-sub";
+        sub.textContent = l.stationIds.length + " stops";
+        item.appendChild(sub);
+        item.addEventListener("click", (e)=>{
+          e.stopPropagation();
+          assignPathToLine(l, assignPopupPath);
+          closeAssignPopup();
+        });
+        list.appendChild(item);
+      });
+      panel.appendChild(list);
+
+      const createBtn = document.createElement("div");
+      createBtn.className = "ap-create";
+      createBtn.textContent = "+ Create Line";
+      createBtn.addEventListener("click", (e)=>{
+        e.stopPropagation();
+        assignPopupCreating = true;
+        renderAssignPopup();
+      });
+      panel.appendChild(createBtn);
+    }
+
+    assignPopEl.appendChild(panel);
+  }
+
+  assignPopEl.addEventListener("click", (e)=> e.stopPropagation());
 
   /* ============================ SIDEBAR: lines ============================ */
   function renderLineList(){
@@ -693,20 +915,14 @@
 
   /* ============================ TOOLS ============================ */
   const toolHints = {
-    select: "Drag stations to move them. Right-click a station for options.",
+    select: "Drag a station onto another to trace a line. Drop on empty space to just move it.",
     station: "Click anywhere on the canvas to place a new station.",
-    line: "Use the + in Line Manager to create a line, then trace it by clicking stations.",
     trains: "Click a line on the map to add a new train to it.",
   };
   document.querySelectorAll(".tool").forEach(t=>{
     t.addEventListener("click", ()=>{
       setTool(t.dataset.tool);
       document.getElementById("toolHint").textContent = toolHints[tool];
-      lineBuilder = null;
-      pendingLine = null;
-      if (tool === "line"){
-        document.getElementById("toolHint").textContent = "Open Line Manager (+) to create a new line first.";
-      }
     });
   });
 
@@ -718,6 +934,7 @@
   document.addEventListener("click", ()=>{
     if (openColorPopoverFor !== null){ openColorPopoverFor = null; renderLineList(); }
     hideCtxMenu();
+    if (assignPopupOpen) closeAssignPopup();
   });
 
   /* ============================ COORD HELPERS ============================ */
@@ -796,7 +1013,12 @@
     if (tool === "select"){
       const st = stationAt(p.x, p.y);
       if (st){
-        dragging = { id: st.id, offsetX: p.x - st.x, offsetY: p.y - st.y };
+        dragging = {
+          id: st.id, offsetX: p.x - st.x, offsetY: p.y - st.y,
+          path: [st.id], mode: null,
+          startX: st.x, startY: st.y,
+          curWX: p.x, curWY: p.y,
+        };
       } else {
         panning = { startSX: p.sx, startSY: p.sy, ox: view.x, oy: view.y };
       }
@@ -805,16 +1027,6 @@
       state.stations.push(st);
       renderLineList();
       pushHistory();
-    } else if (tool === "line"){
-      if (!pendingLine){
-        showToast("Tap + in Line Manager to create a line first");
-      } else {
-        const st = stationAt(p.x, p.y);
-        if (st){
-          if (!lineBuilder) lineBuilder = [];
-          if (lineBuilder[lineBuilder.length-1] !== st.id) lineBuilder.push(st.id);
-        }
-      }
     } else if (tool === "trains"){
       const hit = lineSegmentAt(p.x, p.y);
       if (hit){
@@ -828,9 +1040,31 @@
   canvas.addEventListener("pointermove", (e)=>{
     const p = getPointerPos(e);
     if (dragging){
-      didDrag = true;
-      const st = state.stations.find(s=>s.id===dragging.id);
-      if (st){ st.x = p.x - dragging.offsetX; st.y = p.y - dragging.offsetY; }
+      dragging.curWX = p.x; dragging.curWY = p.y;
+
+      if (!dragging.mode){
+        const dist = Math.hypot(p.x - dragging.startX, p.y - dragging.startY);
+        if (dist > DRAG_MOVE_THRESHOLD){
+          const hover = stationAt(p.x, p.y);
+          if (hover && hover.id !== dragging.id){
+            dragging.mode = "trace";
+          } else {
+            dragging.mode = "move";
+          }
+        }
+      }
+
+      if (dragging.mode === "move"){
+        didDrag = true;
+        const st = state.stations.find(s=>s.id===dragging.id);
+        if (st){ st.x = p.x - dragging.offsetX; st.y = p.y - dragging.offsetY; }
+      } else if (dragging.mode === "trace"){
+        didDrag = true;
+        const hover = stationAt(p.x, p.y);
+        if (hover && dragging.path[dragging.path.length-1] !== hover.id){
+          dragging.path.push(hover.id);
+        }
+      }
     } else if (panning){
       view.x = panning.ox + (p.sx - panning.startSX);
       view.y = panning.oy + (p.sy - panning.startSY);
@@ -838,8 +1072,13 @@
   });
 
   canvas.addEventListener("pointerup", (e)=>{
-    if (dragging && didDrag){
-      pushHistory();
+    if (dragging){
+      if (dragging.mode === "move" && didDrag){
+        pushHistory();
+      } else if (dragging.mode === "trace" && dragging.path.length >= 2){
+        const p = getPointerPos(e);
+        openAssignPopup(p.sx, p.sy, dragging.path.slice());
+      }
     }
     dragging = null;
     panning = null;
@@ -892,34 +1131,8 @@
   document.getElementById("zoomReset").addEventListener("click", ()=>{ view = {x:0,y:0,scale:1}; });
 
   window.addEventListener("keydown", (e)=>{
-    if (tool === "line" && lineBuilder && pendingLine){
-      if (e.key === "Enter"){
-        if (lineBuilder.length >= 2){
-          const line = {
-            id: nextLineId++,
-            name: pendingLine.numbered ? "" : pendingLine.name,
-            number: pendingLine.numbered ? pendingLine.number : "",
-            numbered: pendingLine.numbered,
-            color: pendingLine.color,
-            stationIds: lineBuilder.slice(),
-          };
-          state.lines.push(line);
-          selectedLineId = line.id;
-          rebuildTrains();
-          renderLineList();
-          showToast("Line " + lineLabel(line) + " created with " + lineBuilder.length + " stops");
-          pushHistory();
-        }
-        lineBuilder = null;
-        pendingLine = null;
-        setTool("select");
-        document.getElementById("toolHint").textContent = toolHints.select;
-      } else if (e.key === "Escape"){
-        lineBuilder = null;
-        pendingLine = null;
-        setTool("select");
-        document.getElementById("toolHint").textContent = toolHints.select;
-      }
+    if (e.key === "Escape" && assignPopupOpen){
+      closeAssignPopup();
       return;
     }
 
@@ -1106,17 +1319,18 @@
       });
     });
 
-    // if building a line, draw preview
-    if (tool === "line" && lineBuilder && lineBuilder.length){
+    // if dragging out a new line trace, draw a live preview
+    if (dragging && dragging.mode === "trace" && dragging.path.length){
       ctx.beginPath();
       ctx.setLineDash([6,6]);
-      ctx.strokeStyle = pendingLine ? pendingLine.color : "#16211c";
+      ctx.strokeStyle = "#16211c";
       ctx.lineWidth = 3;
-      lineBuilder.forEach((id,i)=>{
+      dragging.path.forEach((id,i)=>{
         const st = state.stations.find(s=>s.id===id);
         if (!st) return;
         if (i===0) ctx.moveTo(st.x, st.y); else ctx.lineTo(st.x, st.y);
       });
+      if (dragging.curWX != null) ctx.lineTo(dragging.curWX, dragging.curWY);
       ctx.stroke();
       ctx.setLineDash([]);
     }
