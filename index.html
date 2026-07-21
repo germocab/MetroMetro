@@ -322,7 +322,7 @@
   <div class="brand">
     <div class="mark"></div>
     <div>
-      <h1>Transit <span style="font-weight:500;color:var(--ink-soft)">v1.3</span></h1>
+      <h1>Transit <span style="font-weight:500;color:var(--ink-soft)">v1.4</span></h1>
     </div>
   </div>
   <div class="map-title-wrap">
@@ -365,7 +365,7 @@
         Trains
       </div>
     </div>
-    <div class="hint" id="toolHint">Drag from a station to another to trace a line.</div>
+    <div class="hint" id="toolHint">Drag from a station to another to trace a line. Shift+click or shift-drag to select multiple stations — then drag, right-click, or press Delete to move, connect, or remove them together.</div>
 
     <div class="lm-header">
       <div class="section-title" style="margin:0;">Line Manager</div>
@@ -452,6 +452,19 @@
   let suppressNextDocClick = false; // guards against the click event that follows the pointerup which opened the popup
   let moveArmedStationId = null; // station id armed via "Move Station" context menu option — next drag moves it instead of tracing
 
+  // Multi-select: array preserves selection order (used as the path when creating a line from selection)
+  let selectedStationIds = [];
+  let rubberBand = null;   // {startSX,startSY,curSX,curSY} — box-select in progress (screen coords)
+  let groupDrag = null;    // {startWX,startWY, orig:Map(id->{x,y})} — dragging all selected stations together
+
+  function isSelected(id){ return selectedStationIds.includes(id); }
+  function toggleSelect(id){
+    const i = selectedStationIds.indexOf(id);
+    if (i>=0) selectedStationIds.splice(i,1); else selectedStationIds.push(id);
+  }
+  function addSelect(id){ if (!isSelected(id)) selectedStationIds.push(id); }
+  function clearSelection(){ selectedStationIds = []; }
+
   let panelMode = "docked"; // 'docked' | 'floating' | 'hidden'
   let previousPanelMode = "docked";
   let panelPos = { x: 90, y: 80 };
@@ -494,6 +507,9 @@
     selectedLineId = null;
     openColorPopoverFor = null;
     dragging = null;
+    groupDrag = null;
+    rubberBand = null;
+    clearSelection();
     closeAssignPopup();
     rebuildTrains();
     renderLineList();
@@ -1135,7 +1151,7 @@
 
   /* ============================ TOOLS ============================ */
   const toolHints = {
-    select: "Drag from a station to another to trace a line.",
+    select: "Drag from a station to another to trace a line. Shift+click or shift-drag to select multiple stations — then drag, right-click, or press Delete to move, connect, or remove them together.",
     station: "Click anywhere on the canvas to place a new station.",
     trains: "Click a line on the map to add a new train to it.",
   };
@@ -1182,12 +1198,38 @@
     state.lines.forEach(l=>{ l.stationIds = l.stationIds.filter(sid=>sid!==id); });
     state.lines = state.lines.filter(l=>l.stationIds.length>1);
     if (selectedLineId !== null && !state.lines.some(l=>l.id===selectedLineId)) selectedLineId = null;
+    selectedStationIds = selectedStationIds.filter(sid=>sid!==id);
     rebuildTrains();
     renderLineList();
     renderLegend();
     renderStationList();
     showToast("Station deleted");
     pushHistory();
+  }
+
+  function deleteSelectedStations(){
+    const ids = selectedStationIds.slice();
+    if (!ids.length) return;
+    state.stations = state.stations.filter(s=>!ids.includes(s.id));
+    state.lines.forEach(l=>{ l.stationIds = l.stationIds.filter(sid=>!ids.includes(sid)); });
+    state.lines = state.lines.filter(l=>l.stationIds.length>1);
+    if (selectedLineId !== null && !state.lines.some(l=>l.id===selectedLineId)) selectedLineId = null;
+    clearSelection();
+    rebuildTrains();
+    renderLineList();
+    renderLegend();
+    renderStationList();
+    showToast(ids.length + " station" + (ids.length===1?"":"s") + " deleted");
+    pushHistory();
+  }
+
+  function createLineFromSelection(sx, sy){
+    if (selectedStationIds.length < 2){
+      showToast("Select at least 2 stations first");
+      return;
+    }
+    openAssignPopup(sx, sy, selectedStationIds.slice());
+    suppressNextDocClick = true;
   }
 
   function addTrainToLine(line){
@@ -1249,7 +1291,30 @@
 
     if (tool === "select"){
       const st = stationAt(p.x, p.y);
+
+      if (e.shiftKey){
+        // Shift = multi-select mode: click a station to toggle it in/out of
+        // the selection, or drag on empty canvas to box-select.
+        if (st){
+          toggleSelect(st.id);
+        } else {
+          rubberBand = { startSX: p.sx, startSY: p.sy, curSX: p.sx, curSY: p.sy };
+        }
+        return;
+      }
+
       if (st){
+        if (selectedStationIds.length > 1 && isSelected(st.id)){
+          // Clicked a station that's part of the current multi-selection —
+          // drag the whole group together.
+          groupDrag = { startWX: p.x, startWY: p.y, orig: new Map() };
+          selectedStationIds.forEach(id=>{
+            const s = state.stations.find(s=>s.id===id);
+            if (s) groupDrag.orig.set(id, { x: s.x, y: s.y });
+          });
+          return;
+        }
+        clearSelection();
         if (moveArmedStationId === st.id){
           dragging = {
             id: st.id, moving: true,
@@ -1264,6 +1329,7 @@
           };
         }
       } else {
+        clearSelection();
         moveArmedStationId = null;
         panning = { startSX: p.sx, startSY: p.sy, ox: view.x, oy: view.y };
       }
@@ -1284,7 +1350,16 @@
 
   canvas.addEventListener("pointermove", (e)=>{
     const p = getPointerPos(e);
-    if (dragging){
+    if (rubberBand){
+      rubberBand.curSX = p.sx; rubberBand.curSY = p.sy;
+    } else if (groupDrag){
+      didDrag = true;
+      const dx = p.x - groupDrag.startWX, dy = p.y - groupDrag.startWY;
+      groupDrag.orig.forEach((pos, id)=>{
+        const s = state.stations.find(s=>s.id===id);
+        if (s){ s.x = pos.x + dx; s.y = pos.y + dy; }
+      });
+    } else if (dragging){
       if (dragging.moving){
         didDrag = true;
         const st = state.stations.find(s=>s.id===dragging.id);
@@ -1304,6 +1379,23 @@
   });
 
   canvas.addEventListener("pointerup", (e)=>{
+    if (rubberBand){
+      const x1 = Math.min(rubberBand.startSX, rubberBand.curSX), x2 = Math.max(rubberBand.startSX, rubberBand.curSX);
+      const y1 = Math.min(rubberBand.startSY, rubberBand.curSY), y2 = Math.max(rubberBand.startSY, rubberBand.curSY);
+      // only count it as a box-select if the user actually dragged a bit
+      if (Math.hypot(x2-x1, y2-y1) > 4){
+        const wA = screenToWorld(x1, y1), wB = screenToWorld(x2, y2);
+        state.stations.forEach(st=>{
+          if (st.x >= wA.x && st.x <= wB.x && st.y >= wA.y && st.y <= wB.y) addSelect(st.id);
+        });
+        if (selectedStationIds.length) showToast(selectedStationIds.length + " station" + (selectedStationIds.length===1?"":"s") + " selected");
+      }
+      rubberBand = null;
+    }
+    if (groupDrag){
+      if (didDrag) pushHistory();
+      groupDrag = null;
+    }
     if (dragging){
       if (dragging.moving){
         if (didDrag) pushHistory();
@@ -1323,7 +1415,17 @@
     const p = getPointerPos(e);
     const st = stationAt(p.x, p.y);
     const menuX = p.sx, menuY = p.sy;
-    if (st){
+    if (st && selectedStationIds.length > 1 && isSelected(st.id)){
+      const n = selectedStationIds.length;
+      showCtxMenu(menuX, menuY, [
+        { label: "Move Selected (" + n + ")", icon: "move", action: ()=>{
+            showToast("Drag any selected station to move the group");
+          }
+        },
+        { label: "Create Line From Selection", icon: "plus", action: ()=> createLineFromSelection(menuX, menuY) },
+        { label: "Delete " + n + " Stations", icon: "trash", danger: true, action: ()=> deleteSelectedStations() },
+      ]);
+    } else if (st){
       showCtxMenu(menuX, menuY, [
         { label: "Move Station", icon: "move", action: ()=>{
             moveArmedStationId = st.id;
@@ -1338,7 +1440,7 @@
         { label: "Delete Station", icon: "trash", danger: true, action: ()=> deleteStation(st.id) },
       ]);
     } else {
-      showCtxMenu(menuX, menuY, [
+      const items = [
         { label: "Create Station Here", icon: "plus", action: ()=>{
             const newSt = { id: nextStationId++, x: p.x, y: p.y, name: "Station " + (state.stations.length+1) };
             state.stations.push(newSt);
@@ -1346,7 +1448,14 @@
             pushHistory();
           }
         },
-      ]);
+      ];
+      if (selectedStationIds.length > 1){
+        items.push(
+          { label: "Create Line From Selection", icon: "plus", action: ()=> createLineFromSelection(menuX, menuY) },
+          { label: "Delete " + selectedStationIds.length + " Stations", icon: "trash", danger: true, action: ()=> deleteSelectedStations() }
+        );
+      }
+      showCtxMenu(menuX, menuY, items);
     }
   });
 
@@ -1372,6 +1481,17 @@
   window.addEventListener("keydown", (e)=>{
     if (e.key === "Escape" && assignPopupOpen){
       closeAssignPopup();
+      return;
+    }
+    if (e.key === "Escape" && selectedStationIds.length){
+      clearSelection();
+      return;
+    }
+
+    const typing = document.activeElement && ["INPUT","TEXTAREA"].includes(document.activeElement.tagName);
+    if (!typing && (e.key === "Delete" || e.key === "Backspace") && selectedStationIds.length){
+      e.preventDefault();
+      deleteSelectedStations();
       return;
     }
 
@@ -1578,6 +1698,17 @@
       const linesHere = state.lines.filter(l=>l.stationIds.includes(st.id));
       const isInterchange = linesHere.length > 1;
       const r = isInterchange ? STATION_R + 4 : STATION_R - 2;
+
+      if (isSelected(st.id)){
+        ctx.beginPath();
+        ctx.arc(st.x, st.y, r + 6, 0, Math.PI*2);
+        ctx.setLineDash([4,3]);
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = "#2f6be0";
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
       ctx.beginPath();
       ctx.arc(st.x, st.y, r, 0, Math.PI*2);
       ctx.fillStyle = "#ffffff";
@@ -1619,6 +1750,21 @@
     });
 
     ctx.restore();
+
+    // rubber-band box-select rectangle (drawn in screen space, outside the view transform)
+    if (rubberBand){
+      const x = Math.min(rubberBand.startSX, rubberBand.curSX);
+      const y = Math.min(rubberBand.startSY, rubberBand.curSY);
+      const w = Math.abs(rubberBand.curSX - rubberBand.startSX);
+      const h = Math.abs(rubberBand.curSY - rubberBand.startSY);
+      ctx.save();
+      ctx.fillStyle = "rgba(47,107,224,0.10)";
+      ctx.strokeStyle = "#2f6be0";
+      ctx.lineWidth = 1.5;
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeRect(x, y, w, h);
+      ctx.restore();
+    }
   }
 
   /* ============================ LOOP ============================ */
@@ -1660,6 +1806,7 @@
     nextLineId = obj.nextLineId || (Math.max(0,...state.lines.map(l=>l.id))+1);
     mapNameInput.value = obj.name || "Untitled Metro Map";
     selectedLineId = null;
+    clearSelection();
     rebuildTrains();
     renderLineList();
     renderLegend();
@@ -1708,6 +1855,7 @@
       state = { stations:[], lines:[] };
       trains = [];
       selectedLineId = null;
+      clearSelection();
       nextStationId = 1; nextLineId = 1;
       renderLineList();
       renderLegend();
