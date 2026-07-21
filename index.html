@@ -174,6 +174,34 @@
 
   .empty-note{ font-size:12px; color:var(--ink-soft); padding:6px 2px; }
 
+  /* Station List (shown for the selected line) */
+  #stationListTitle{ display:flex; align-items:center; justify-content:space-between; }
+  #stationListTitle .sl-close{
+    cursor:pointer; color:var(--ink-soft); font-weight:700; font-size:14px; line-height:1;
+    width:18px; height:18px; display:flex; align-items:center; justify-content:center; border-radius:5px;
+  }
+  #stationListTitle .sl-close:hover{ background:var(--bg); color:var(--ink); }
+  #stationList{ display:flex; flex-direction:column; gap:5px; margin-bottom:6px; }
+  .station-row{
+    display:flex; align-items:center; gap:7px; padding:6px 8px;
+    border-radius:9px; border:1px solid var(--line); background:var(--bg);
+  }
+  .station-row:hover{ border-color:#cfd6cf; }
+  .srow-num{
+    width:18px; height:18px; border-radius:50%; background:var(--panel); border:1px solid var(--line);
+    font-size:10px; font-weight:700; color:var(--ink-soft); display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  }
+  .station-row input.sname{
+    border:none; background:transparent; font-size:12.5px; font-weight:600; flex:1; min-width:0;
+    color:var(--ink); padding:2px 0;
+  }
+  .station-row input.sname:focus{ outline:none; }
+  .station-row .srow-badge{ font-size:9.5px; font-weight:700; color:#fff; padding:2px 5px; border-radius:5px; flex-shrink:0; }
+  .station-row .sdel{ opacity:0; flex-shrink:0; width:18px; height:18px; display:flex; align-items:center; justify-content:center; border-radius:6px; cursor:pointer; }
+  .station-row:hover .sdel{ opacity:1; }
+  .station-row .sdel:hover{ background:#fdecec; }
+  .station-row .sdel svg{ width:11px; height:11px; stroke:#b0403f; }
+
   /* Color popover */
   .color-pop{
     position:absolute; top:calc(100% + 6px); left:8px; z-index:40;
@@ -294,7 +322,7 @@
   <div class="brand">
     <div class="mark"></div>
     <div>
-      <h1>Transit <span style="font-weight:500;color:var(--ink-soft)">v1.2</span></h1>
+      <h1>Transit <span style="font-weight:500;color:var(--ink-soft)">v1.3</span></h1>
     </div>
   </div>
   <div class="map-title-wrap">
@@ -345,6 +373,9 @@
     </div>
     <div id="createPanel"></div>
     <div id="lineList"></div>
+
+    <div class="section-title" id="stationListTitle" style="display:none;"></div>
+    <div id="stationList"></div>
 
     <div class="section-title">Map stats</div>
     <div class="stat-row"><span>Stations</span><b id="statStations">0</b></div>
@@ -467,6 +498,7 @@
     rebuildTrains();
     renderLineList();
     renderLegend();
+    renderStationList();
   }
 
   function undo(){
@@ -674,6 +706,7 @@
       selectedLineId = line.id;
       renderLineList();
       renderLegend();
+      renderStationList();
       closeCreatePanel();
       showToast(lineLabel(line) + " added — drag between stations to trace it");
       pushHistory();
@@ -748,6 +781,7 @@
     rebuildTrains();
     renderLineList();
     renderLegend();
+    renderStationList();
     showToast(lineLabel(line) + " updated");
     pushHistory();
   }
@@ -828,6 +862,7 @@
         rebuildTrains();
         renderLineList();
         renderLegend();
+        renderStationList();
         showToast(lineLabel(line) + " created with " + assignPopupPath.length + " stops");
         pushHistory();
         closeAssignPopup();
@@ -940,10 +975,10 @@
         e.stopPropagation();
         if (l.numbered){
           const v = prompt("Name for this line:", l.name || ("Line " + l.id));
-          if (v && v.trim()){ l.numbered = false; l.name = v.trim(); renderLineList(); renderLegend(); pushHistory(); }
+          if (v && v.trim()){ l.numbered = false; l.name = v.trim(); renderLineList(); renderLegend(); renderStationList(); pushHistory(); }
         } else {
           const v = prompt("Number for this line:", l.number || "1");
-          if (v && v.trim()){ l.numbered = true; l.number = v.trim(); renderLineList(); renderLegend(); pushHistory(); }
+          if (v && v.trim()){ l.numbered = true; l.number = v.trim(); renderLineList(); renderLegend(); renderStationList(); pushHistory(); }
         }
       });
       row.appendChild(modeBtn);
@@ -956,6 +991,7 @@
         if (l.numbered) l.number = inp.value || l.number;
         else l.name = inp.value || l.name;
         renderLegend();
+        renderStationList();
         pushHistory();
       });
       row.appendChild(inp);
@@ -973,13 +1009,14 @@
         state.lines = state.lines.filter(x=>x.id!==l.id);
         trains = trains.filter(t=>t.lineId!==l.id);
         if (selectedLineId === l.id) selectedLineId = null;
-        renderLineList(); rebuildTrains(); renderLegend(); showToast("Line deleted"); pushHistory();
+        renderLineList(); rebuildTrains(); renderLegend(); renderStationList(); showToast("Line deleted"); pushHistory();
       });
       row.appendChild(del);
 
       row.addEventListener("click", ()=>{
         selectedLineId = (selectedLineId === l.id) ? null : l.id;
         renderLineList();
+        renderStationList();
       });
 
       lineListEl.appendChild(row);
@@ -987,6 +1024,94 @@
     document.getElementById("statLines").textContent = state.lines.length;
     document.getElementById("statStations").textContent = state.stations.length;
     document.getElementById("statTrains").textContent = trains.length;
+  }
+
+  /* ============================ SIDEBAR: station list (for selected line) ============================ */
+  function renderStationList(){
+    const titleEl = document.getElementById("stationListTitle");
+    const listEl = document.getElementById("stationList");
+    listEl.innerHTML = "";
+
+    const line = state.lines.find(l=>l.id===selectedLineId);
+    if (!line){
+      titleEl.style.display = "none";
+      return;
+    }
+    titleEl.style.display = "flex";
+    titleEl.innerHTML = "";
+    const titleText = document.createElement("span");
+    titleText.textContent = "Station List — " + (lineLabel(line) || ("Line " + line.id));
+    titleEl.appendChild(titleText);
+    const closeBtn = document.createElement("span");
+    closeBtn.className = "sl-close";
+    closeBtn.textContent = "×";
+    closeBtn.title = "Close station list";
+    closeBtn.addEventListener("click", ()=>{
+      selectedLineId = null;
+      renderLineList();
+      renderStationList();
+    });
+    titleEl.appendChild(closeBtn);
+
+    if (line.stationIds.length === 0){
+      const p = document.createElement("div");
+      p.className = "empty-note";
+      p.textContent = "No stations yet — drag between stations on the map to trace this line.";
+      listEl.appendChild(p);
+      return;
+    }
+
+    line.stationIds.forEach((sid, idx)=>{
+      const st = state.stations.find(s=>s.id===sid);
+      if (!st) return;
+
+      const row = document.createElement("div");
+      row.className = "station-row";
+
+      const num = document.createElement("div");
+      num.className = "srow-num";
+      num.textContent = idx + 1;
+      row.appendChild(num);
+
+      const inp = document.createElement("input");
+      inp.className = "sname";
+      inp.value = st.name;
+      inp.addEventListener("click", e=>e.stopPropagation());
+      inp.addEventListener("change", ()=>{
+        st.name = inp.value.trim() || st.name;
+        inp.value = st.name;
+        pushHistory();
+      });
+      row.appendChild(inp);
+
+      const otherLines = state.lines.filter(l=>l.id!==line.id && l.stationIds.includes(st.id));
+      if (otherLines.length){
+        const badge = document.createElement("div");
+        badge.className = "srow-badge";
+        badge.style.background = otherLines[0].color;
+        badge.title = "Also on " + otherLines.map(l=>lineLabel(l)).join(", ");
+        badge.textContent = "+" + otherLines.length;
+        row.appendChild(badge);
+      }
+
+      const del = document.createElement("div");
+      del.className = "sdel";
+      del.title = "Remove from this line";
+      del.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>`;
+      del.addEventListener("click", (e)=>{
+        e.stopPropagation();
+        line.stationIds = line.stationIds.filter(id=>id!==sid);
+        rebuildTrains();
+        renderLineList();
+        renderStationList();
+        renderLegend();
+        showToast("Removed from " + lineLabel(line));
+        pushHistory();
+      });
+      row.appendChild(del);
+
+      listEl.appendChild(row);
+    });
   }
 
   function renderLegend(){
@@ -1056,9 +1181,11 @@
     state.stations = state.stations.filter(s=>s.id!==id);
     state.lines.forEach(l=>{ l.stationIds = l.stationIds.filter(sid=>sid!==id); });
     state.lines = state.lines.filter(l=>l.stationIds.length>1);
+    if (selectedLineId !== null && !state.lines.some(l=>l.id===selectedLineId)) selectedLineId = null;
     rebuildTrains();
     renderLineList();
     renderLegend();
+    renderStationList();
     showToast("Station deleted");
     pushHistory();
   }
@@ -1205,7 +1332,7 @@
         },
         { label: "Rename Station", icon: "rename", action: ()=>{
             const name = prompt("Rename station:", st.name);
-            if (name && name.trim()){ st.name = name.trim(); renderLineList(); pushHistory(); }
+            if (name && name.trim()){ st.name = name.trim(); renderLineList(); renderStationList(); pushHistory(); }
           }
         },
         { label: "Delete Station", icon: "trash", danger: true, action: ()=> deleteStation(st.id) },
@@ -1536,6 +1663,7 @@
     rebuildTrains();
     renderLineList();
     renderLegend();
+    renderStationList();
     resetHistory();
   }
 
@@ -1583,6 +1711,7 @@
       nextStationId = 1; nextLineId = 1;
       renderLineList();
       renderLegend();
+      renderStationList();
       resetHistory();
       showToast("Map cleared");
     }
@@ -1615,6 +1744,7 @@
     seedExample();
     renderLineList();
     renderLegend();
+    renderStationList();
     resetHistory();
     requestAnimationFrame(loop);
   }
