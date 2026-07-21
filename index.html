@@ -75,9 +75,40 @@
   aside{
     width:270px; flex-shrink:0; background:var(--panel);
     border-right:1px solid var(--line); overflow-y:auto;
-    padding:18px 16px 40px;
+    padding:18px 16px 40px; display:flex; flex-direction:column;
   }
   main{ flex:1; position:relative; min-width:0; }
+
+  /* Panel handle (drag / float / hide controls) */
+  .panel-handle{
+    display:flex; align-items:center; gap:8px; padding-bottom:12px; margin-bottom:14px;
+    border-bottom:1px solid var(--line); flex-shrink:0;
+  }
+  .panel-grip{ color:var(--ink-soft); font-size:13px; letter-spacing:-1px; user-select:none; }
+  .panel-title{ font-size:12px; font-weight:700; color:var(--ink-soft); flex:1; text-transform:uppercase; letter-spacing:.06em; }
+  .panel-handle-actions{ display:flex; gap:5px; }
+  .panel-handle-actions button{
+    width:24px; height:24px; border:1px solid var(--line); background:var(--bg); border-radius:7px;
+    cursor:pointer; font-size:12.5px; color:var(--ink-soft); display:flex; align-items:center; justify-content:center;
+    transition: all .12s ease;
+  }
+  .panel-handle-actions button:hover{ background:var(--accent-soft); color:var(--accent); border-color:var(--accent); }
+
+  aside.floating{
+    position:fixed; z-index:80; border-right:none; border:1px solid var(--line);
+    border-radius:14px; box-shadow:var(--shadow); max-height:80vh; width:270px;
+  }
+  aside.floating .panel-handle{ cursor:grab; }
+  aside.floating .panel-handle:active{ cursor:grabbing; }
+  aside.hidden{ display:none; }
+
+  .panel-restore{
+    position:absolute; left:18px; top:18px; z-index:60; width:40px; height:40px; border-radius:11px;
+    border:1px solid var(--line); background:var(--panel); box-shadow:var(--shadow); cursor:pointer;
+    font-size:16px; display:none; align-items:center; justify-content:center; color:var(--ink);
+  }
+  .panel-restore:hover{ background:var(--bg); }
+  .panel-restore.show{ display:flex; }
 
   .section-title{
     font-size:11px; text-transform:uppercase; letter-spacing:.07em;
@@ -263,7 +294,7 @@
   <div class="brand">
     <div class="mark"></div>
     <div>
-      <h1>Transit <span style="font-weight:500;color:var(--ink-soft)">v1.1.3.2</span></h1>
+      <h1>Transit <span style="font-weight:500;color:var(--ink-soft)">v1.2</span></h1>
     </div>
   </div>
   <div class="map-title-wrap">
@@ -282,7 +313,15 @@
 </header>
 
 <div class="app">
-  <aside>
+  <aside id="sidePanel">
+    <div class="panel-handle" id="panelHandle">
+      <span class="panel-grip">⠿</span>
+      <span class="panel-title">Panel</span>
+      <div class="panel-handle-actions">
+        <button id="btnFloatPanel" title="Float panel">⤢</button>
+        <button id="btnHidePanel" title="Hide panel">✕</button>
+      </div>
+    </div>
     <div class="section-title">Tools</div>
     <div class="tools">
       <div class="tool active" data-tool="select" title="Move & select">
@@ -325,6 +364,7 @@
       <div class="floating-toast" id="toast"></div>
       <div class="ctx-menu" id="ctxMenu"></div>
       <div class="assign-pop" id="assignPop" style="display:none;"></div>
+      <button class="panel-restore" id="btnShowPanel" title="Show panel">☰</button>
     </div>
   </main>
 </div>
@@ -380,6 +420,10 @@
   let assignPopupDraft = null;    // draft for inline create form inside the popup
   let suppressNextDocClick = false; // guards against the click event that follows the pointerup which opened the popup
   let moveArmedStationId = null; // station id armed via "Move Station" context menu option — next drag moves it instead of tracing
+
+  let panelMode = "docked"; // 'docked' | 'floating' | 'hidden'
+  let previousPanelMode = "docked";
+  let panelPos = { x: 90, y: 80 };
 
   let trains = []; // {lineId, t, dir}
 
@@ -468,6 +512,57 @@
     ctx.setTransform(dpr,0,0,dpr,0,0);
   }
   window.addEventListener("resize", resizeCanvas);
+
+  /* ============================ SIDEBAR PANEL (dock / float / hide) ============================ */
+  const sidePanelEl = document.getElementById("sidePanel");
+  const panelHandleEl = document.getElementById("panelHandle");
+  const btnFloatPanel = document.getElementById("btnFloatPanel");
+  const btnHidePanel = document.getElementById("btnHidePanel");
+  const btnShowPanel = document.getElementById("btnShowPanel");
+
+  function applyPanelMode(){
+    sidePanelEl.classList.toggle("floating", panelMode === "floating");
+    sidePanelEl.classList.toggle("hidden", panelMode === "hidden");
+    btnShowPanel.classList.toggle("show", panelMode === "hidden");
+    if (panelMode === "floating"){
+      sidePanelEl.style.left = panelPos.x + "px";
+      sidePanelEl.style.top = panelPos.y + "px";
+    } else {
+      sidePanelEl.style.left = "";
+      sidePanelEl.style.top = "";
+    }
+    btnFloatPanel.textContent = panelMode === "floating" ? "⤡" : "⤢";
+    btnFloatPanel.title = panelMode === "floating" ? "Dock panel" : "Float panel";
+    requestAnimationFrame(resizeCanvas);
+  }
+
+  function setPanelMode(mode){
+    if (mode !== "hidden") previousPanelMode = mode;
+    panelMode = mode;
+    applyPanelMode();
+  }
+
+  btnFloatPanel.addEventListener("click", ()=> setPanelMode(panelMode === "floating" ? "docked" : "floating"));
+  btnHidePanel.addEventListener("click", ()=> setPanelMode("hidden"));
+  btnShowPanel.addEventListener("click", ()=> setPanelMode(previousPanelMode === "hidden" ? "docked" : previousPanelMode));
+
+  let panelDrag = null;
+  panelHandleEl.addEventListener("pointerdown", (e)=>{
+    if (panelMode !== "floating") return;
+    const rect = sidePanelEl.getBoundingClientRect();
+    panelDrag = { offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top };
+    panelHandleEl.setPointerCapture(e.pointerId);
+  });
+  panelHandleEl.addEventListener("pointermove", (e)=>{
+    if (!panelDrag) return;
+    panelPos.x = Math.max(4, Math.min(window.innerWidth - 60, e.clientX - panelDrag.offsetX));
+    panelPos.y = Math.max(4, Math.min(window.innerHeight - 40, e.clientY - panelDrag.offsetY));
+    sidePanelEl.style.left = panelPos.x + "px";
+    sidePanelEl.style.top = panelPos.y + "px";
+  });
+  panelHandleEl.addEventListener("pointerup", (e)=>{
+    panelDrag = null;
+  });
 
   /* ============================ SIDEBAR: create-line panel ============================ */
   let creatingLine = false; // whether the create panel is open
@@ -1005,12 +1100,25 @@
   /* ============================ INTERACTIONS ============================ */
   let didDrag = false;
 
+  canvas.addEventListener("mousedown", (e)=>{
+    if (e.button === 1) e.preventDefault();
+  });
+  canvas.addEventListener("auxclick", (e)=>{
+    if (e.button === 1) e.preventDefault();
+  });
+
   canvas.addEventListener("pointerdown", (e)=>{
     if (e.button === 2) return; // handled by contextmenu
     hideCtxMenu();
     canvas.setPointerCapture(e.pointerId);
     const p = getPointerPos(e);
     didDrag = false;
+
+    if (e.button === 1){
+      e.preventDefault();
+      panning = { startSX: p.sx, startSY: p.sy, ox: view.x, oy: view.y };
+      return;
+    }
 
     if (tool === "select"){
       const st = stationAt(p.x, p.y);
@@ -1277,8 +1385,7 @@
       ctx.beginPath();
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
-      ctx.lineWidth = 5.5 / view.scale > 5.5 ? 5.5 : 5.5;
-      ctx.lineWidth = 5.5;
+      ctx.lineWidth = 6;
       ctx.strokeStyle = line.color;
 
       for (let i=0;i<pts.length-1;i++){
@@ -1341,22 +1448,24 @@
 
     // stations
     state.stations.forEach(st=>{
-      const isInterchange = state.lines.filter(l=>l.stationIds.includes(st.id)).length > 1;
+      const linesHere = state.lines.filter(l=>l.stationIds.includes(st.id));
+      const isInterchange = linesHere.length > 1;
+      const r = isInterchange ? STATION_R + 4 : STATION_R - 2;
       ctx.beginPath();
-      ctx.arc(st.x, st.y, isInterchange ? STATION_R+2 : STATION_R, 0, Math.PI*2);
+      ctx.arc(st.x, st.y, r, 0, Math.PI*2);
       ctx.fillStyle = "#ffffff";
       ctx.fill();
-      ctx.lineWidth = isInterchange ? 3.5 : 3;
+      ctx.lineWidth = isInterchange ? 5 : 2.5;
       ctx.strokeStyle = "#16211c";
       ctx.stroke();
 
       // label
-      ctx.font = "600 12px -apple-system, Segoe UI, Roboto, sans-serif";
+      ctx.font = (isInterchange ? "700 " : "600 ") + "12px -apple-system, Segoe UI, Roboto, sans-serif";
       ctx.fillStyle = "#16211c";
       ctx.textBaseline = "middle";
       const label = st.name;
       const tw = ctx.measureText(label).width;
-      const lx = st.x + STATION_R + 8;
+      const lx = st.x + r + 8;
       const ly = st.y;
       ctx.fillStyle = "rgba(246,247,245,0.86)";
       ctx.fillRect(lx-3, ly-9, tw+6, 18);
