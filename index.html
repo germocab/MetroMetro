@@ -263,7 +263,7 @@
   <div class="brand">
     <div class="mark"></div>
     <div>
-      <h1>Transit <span style="font-weight:500;color:var(--ink-soft)">v1.1.3</span></h1>
+      <h1>Transit <span style="font-weight:500;color:var(--ink-soft)">v1.1.3.2</span></h1>
     </div>
   </div>
   <div class="map-title-wrap">
@@ -379,6 +379,7 @@
   let assignPopupCreating = false; // whether the inline "create line" mini-form is showing
   let assignPopupDraft = null;    // draft for inline create form inside the popup
   let suppressNextDocClick = false; // guards against the click event that follows the pointerup which opened the popup
+  let moveArmedStationId = null; // station id armed via "Move Station" context menu option — next drag moves it instead of tracing
 
   let trains = []; // {lineId, t, dir}
 
@@ -978,6 +979,7 @@
     rename: `<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`,
     trash: `<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>`,
     plus: `<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>`,
+    move: `<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20M5 5l-3 3 3 3M19 5l3 3-3 3M5 19l-3-3 3-3M19 19l3-3-3-3"/></svg>`,
   };
 
   function showCtxMenu(x, y, items){
@@ -1013,12 +1015,21 @@
     if (tool === "select"){
       const st = stationAt(p.x, p.y);
       if (st){
-        dragging = {
-          id: st.id,
-          path: [st.id],
-          curWX: p.x, curWY: p.y,
-        };
+        if (moveArmedStationId === st.id){
+          dragging = {
+            id: st.id, moving: true,
+            offsetX: p.x - st.x, offsetY: p.y - st.y,
+          };
+        } else {
+          moveArmedStationId = null;
+          dragging = {
+            id: st.id,
+            path: [st.id],
+            curWX: p.x, curWY: p.y,
+          };
+        }
       } else {
+        moveArmedStationId = null;
         panning = { startSX: p.sx, startSY: p.sy, ox: view.x, oy: view.y };
       }
     } else if (tool === "station"){
@@ -1039,11 +1050,17 @@
   canvas.addEventListener("pointermove", (e)=>{
     const p = getPointerPos(e);
     if (dragging){
-      dragging.curWX = p.x; dragging.curWY = p.y;
-      didDrag = true;
-      const hover = stationAt(p.x, p.y);
-      if (hover && dragging.path[dragging.path.length-1] !== hover.id){
-        dragging.path.push(hover.id);
+      if (dragging.moving){
+        didDrag = true;
+        const st = state.stations.find(s=>s.id===dragging.id);
+        if (st){ st.x = p.x - dragging.offsetX; st.y = p.y - dragging.offsetY; }
+      } else {
+        dragging.curWX = p.x; dragging.curWY = p.y;
+        didDrag = true;
+        const hover = stationAt(p.x, p.y);
+        if (hover && dragging.path[dragging.path.length-1] !== hover.id){
+          dragging.path.push(hover.id);
+        }
       }
     } else if (panning){
       view.x = panning.ox + (p.sx - panning.startSX);
@@ -1052,10 +1069,15 @@
   });
 
   canvas.addEventListener("pointerup", (e)=>{
-    if (dragging && dragging.path.length >= 2){
-      const p = getPointerPos(e);
-      openAssignPopup(p.sx, p.sy, dragging.path.slice());
-      suppressNextDocClick = true;
+    if (dragging){
+      if (dragging.moving){
+        if (didDrag) pushHistory();
+        moveArmedStationId = null;
+      } else if (dragging.path.length >= 2){
+        const p = getPointerPos(e);
+        openAssignPopup(p.sx, p.sy, dragging.path.slice());
+        suppressNextDocClick = true;
+      }
     }
     dragging = null;
     panning = null;
@@ -1068,6 +1090,11 @@
     const menuX = p.sx, menuY = p.sy;
     if (st){
       showCtxMenu(menuX, menuY, [
+        { label: "Move Station", icon: "move", action: ()=>{
+            moveArmedStationId = st.id;
+            showToast("Drag " + st.name + " to reposition it");
+          }
+        },
         { label: "Rename Station", icon: "rename", action: ()=>{
             const name = prompt("Rename station:", st.name);
             if (name && name.trim()){ st.name = name.trim(); renderLineList(); pushHistory(); }
@@ -1297,7 +1324,7 @@
     });
 
     // if dragging out a new line trace, draw a live preview
-    if (dragging && dragging.path.length){
+    if (dragging && !dragging.moving && dragging.path.length){
       ctx.beginPath();
       ctx.setLineDash([6,6]);
       ctx.strokeStyle = "#16211c";
